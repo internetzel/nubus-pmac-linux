@@ -1,0 +1,139 @@
+/*
+ * NuBus PowerMac Device Tree Source
+ */
+
+
+/ {
+	model = "PowerMac,NuBus";
+	compatible = "PDM","MacRISC";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	chosen {
+	};
+
+	PowerPC@0 {
+		device_type = "cpu";
+		clock-frequency = <3938700>;
+		bus-frequency = <1C9C380>;
+		reg = <0 0>;
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0 0>;
+	};
+
+	amic-io@0 {
+		device_type = "cpu-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		/* a fake for early serial console */
+		assigned-addresses = <00000000 00000000 00000000>;
+
+	  	nubus@50f00000 {
+			device_type = "nubus";
+			compatible = "bart4";
+			reg = <50f00000 42000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+		};
+
+		amic@50f20000 {
+			reg = <50f2a000 4 50f01a00 4 50f01c00 4 50f01800 4 50f26003 4 50f26013 4 50f26002 4 50f26012 4 50f2a008 4 50f2a00a 4>;
+			AAPL,interrupts = <0 1 11 4 5 0>;
+		};
+
+		amic-dma@50f20000 {
+			reg = < 50f31000 10>;
+		};
+
+		via-cuda@50f00000 {
+			device_type = "cuda";
+			AAPL,interrupts = <a 0>;
+			reg = <50f00000 2000>;
+
+			adb@0 {
+				device_type = "adb";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				keyboard@0 {
+					device_type = "keyboard";
+					reg = <0>;
+				};
+
+				mouse@0 {
+					device_type = "mouse";
+					#buttons = <1>;
+					reg = <1>;
+				};
+			};
+		};
+
+		xpram@50f00000 {
+			device_type = "xpram";
+			compatible = "PDM";
+		};
+
+		amic-53c94@50f10000 {
+			device_type = "scsi";
+			reg = <50f10000 100 50f32000 10>;
+			AAPL,interrupts = <13 10 0>;
+			clock-frequency = <1312d00>;
+		};
+
+		53cf94@50f11000 {
+			device_type = "scsi";
+			reg = <50f11000 100 50f32004 10>;
+			AAPL,interrupts = <16 12 0>;
+			clock-frequency = <2625a00>;
+		};
+
+		mace-amic@50f0a000 {
+			device_type = "network";
+			reg = <50f0a000 1000 50f31c20 444 50f08001 10>;
+			AAPL,interrupts = <3 25 24>;
+		};
+
+		escc@50f04000 {
+			device_type = "escc";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			ch-a@50f04002 {
+				device_type = "serial";
+				compatible = "pre_pci";
+				reg = <50f04002 10 50f32080 20>;
+				AAPL,interrupts = <2 23 22 0>;
+			};
+
+			ch-b@50f04000 {
+				device_type = "serial";
+				compatible = "pre_pci";
+				AAPL,connector = "infrared";
+				reg = <50f04000 10 50f320a0 20>;
+				AAPL,interrupts = <2 21 20 0>;
+			};
+		};
+
+		awacs-amic@50f14000 {
+			device_type = "sound";
+			reg = <50f14000 1c>;
+			AAPL,interrupts = <29 28 0>;
+		};
+
+		swim3-amic@50f16000 {
+			device_type = "block";
+			reg = <50f16000 2000 50f32060 10>;
+			AAPL,interrupts = <15 26 0>;
+		};
+
+		ariel2@50f24000 {
+			device_type = "display";
+			reg = <50f24000 10 50f28000 10>;
+			AAPL,interrupts = <1e 0>;
+			address = <100000>;
+		};
+	};
+};

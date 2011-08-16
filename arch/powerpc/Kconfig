@@ -616,6 +616,11 @@ config ISA_DMA_API
 
 menu "Bus options"
 
+config NUBUS
+	bool
+	depends on NBPMAC
+	default y
+
 config ISA
 	bool "Support for ISA-bus hardware"
 	depends on PPC_PREP || PPC_CHRP

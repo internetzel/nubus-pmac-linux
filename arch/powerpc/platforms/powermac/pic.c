@@ -319,16 +319,13 @@ static struct irq_host_ops pmac_pic_host_ops = {
 	.xlate = pmac_pic_host_xlate,
 };
 
-static void __init pmac_pic_probe_oldstyle(void)
+static int __init pmac_pic_probe_oldstyle(void)
 {
         int i;
         struct device_node *master = NULL;
 	struct device_node *slave = NULL;
 	u8 __iomem *addr;
 	struct resource r;
-
-	/* Set our get_irq function */
-	ppc_md.get_irq = pmac_pic_get_irq;
 
 	/*
 	 * Find the interrupt controller type & node
@@ -371,7 +368,11 @@ static void __init pmac_pic_probe_oldstyle(void)
 			level_mask[3] = 0;
 		}
 	}
-	BUG_ON(master == NULL);
+	if (master == NULL)
+		return -ENODEV;
+
+	/* Set our get_irq function */
+	ppc_md.get_irq = pmac_pic_get_irq;
 
 	/*
 	 * Allocate an irq host
@@ -427,6 +428,7 @@ static void __init pmac_pic_probe_oldstyle(void)
 #ifdef CONFIG_XMON
 	setup_irq(irq_create_mapping(NULL, 20), &xmon_action);
 #endif
+	return 0;
 }
 
 int of_irq_map_oldworld(struct device_node *device, int index,
@@ -638,7 +640,12 @@ void __init pmac_pic_init(void)
 		return;
 
 #ifdef CONFIG_PPC32
-	pmac_pic_probe_oldstyle();
+	if (pmac_pic_probe_oldstyle() == 0)
+		return;
+
+#ifdef CONFIG_NBPMAC
+	BUG_ON(nbpmac_pic_probe());
+#endif
 #endif
 }
 

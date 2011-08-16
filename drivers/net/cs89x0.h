@@ -79,7 +79,7 @@
 #define ADD_SIG 0x3000		/*  Expected ID signature */
 
 /* On Macs, we only need use the ISA I/O stuff until we do MEMORY_ON */
-#ifdef CONFIG_MAC
+#if defined(CONFIG_MAC) || defined(CONFIG_NBPMAC)
 #define LCSLOTBASE 0xfee00000
 #define MMIOBASE 0x40000
 #endif

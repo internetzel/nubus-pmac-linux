@@ -461,6 +461,10 @@ static void __init btext_welcome(boot_infos_t *bi)
 }
 #endif /* CONFIG_BOOTX_TEXT */
 
+#ifdef CONFIG_MKLINUX_BOOTER
+#define APPLE_BOOTER_SIGS       0x4d6b4c42 /* 'MkLB' */
+#endif
+
 void __init bootx_init(unsigned long r3, unsigned long r4)
 {
 	boot_infos_t *bi = (boot_infos_t *) r4;
@@ -469,6 +473,9 @@ void __init bootx_init(unsigned long r3, unsigned long r4)
 	unsigned long ptr, x;
 	char *model;
 	unsigned long offset = reloc_offset();
+#ifdef CONFIG_MKLINUX_BOOTER
+        int is_Apple_Booter;
+#endif /* CONFIG_MKLINUX_BOOTER */
 
 	reloc_got2(offset);
 
@@ -516,68 +523,94 @@ void __init bootx_init(unsigned long r3, unsigned long r4)
 		for (;;)
 			;
 	}
-	if (bi->architecture != BOOT_ARCH_PCI) {
-		bootx_printf(" !!! WARNING - Usupported machine"
-			     " architecture !\n");
-		for (;;)
-			;
-	}
+#ifndef CONFIG_NBPMAC
+        if (bi->architecture != BOOT_ARCH_PCI) {
+#else /* CONFIG_NBPMAC */
+        if (!((bi->version >= 4) && (bi->architecture & (BOOT_ARCH_NUBUS | BOOT_ARCH_PCI)))) {
+#endif /* CONFIG_NBPMAC */
+                bootx_printf(" !!! WARNING - Unsupported machine"
+                             " architecture !\n");
+                for (;;)
+                        ;
+        }
 
 #ifdef CONFIG_BOOTX_TEXT
 	btext_welcome(bi);
+#ifdef CONFIG_MKLINUX_BOOTER
+        is_Apple_Booter = (bi->version == APPLE_BOOTER_SIGS);
+        if (bi->version >= 4) { 
+                bootx_printf("Machine booted using %s\n", is_Apple_Booter ? "MkLinux Booter" : "BootX / miBoot");
+                bootx_printf("boot_infos version: 0x%x\n", bi->version);
+        }
+#endif /* CONFIG_MKLINUX_BOOTER */
 #endif
 
-	/* New BootX enters kernel with MMU off, i/os are not allowed
-	 * here. This hack will have been done by the boostrap anyway.
-	 */
-	if (bi->version < 4) {
-		/*
-		 * XXX If this is an iMac, turn off the USB controller.
+	if (bi->architecture == BOOT_ARCH_PCI) {
+		/* New BootX enters kernel with MMU off, i/os are not allowed
+		 * here. This hack will have been done by the boostrap anyway.
+		*/
+		if (bi->version < 4) {
+			/*
+			 * XXX If this is an iMac, turn off the USB controller.
+			 */
+			model = (char *) bootx_early_getprop(r4 + bi->deviceTreeOffset,
+							     4, "model");
+			if (model
+			    && (strcmp(model, "iMac,1") == 0
+				|| strcmp(model, "PowerMac1,1") == 0)) {
+				bootx_printf("iMac,1 detected, shutting down USB\n");
+				out_le32((unsigned __iomem *)0x80880008, 1);	/* XXX */
+			}
+		}
+
+		/* Get a pointer that points above the device tree, args, ramdisk,
+		 * etc... to use for generating the flattened tree
 		 */
-		model = (char *) bootx_early_getprop(r4 + bi->deviceTreeOffset,
-						     4, "model");
-		if (model
-		    && (strcmp(model, "iMac,1") == 0
-			|| strcmp(model, "PowerMac1,1") == 0)) {
-			bootx_printf("iMac,1 detected, shutting down USB\n");
-			out_le32((unsigned __iomem *)0x80880008, 1);	/* XXX */
+		if (bi->version < 5) {
+			space = bi->deviceTreeOffset + bi->deviceTreeSize;
+			if (bi->ramDisk >= space)
+				space = bi->ramDisk + bi->ramDiskSize;
+		} else
+			space = bi->totalParamsSize;
+
+		bootx_printf("Total space used by parameters & ramdisk: 0x%x\n", space);
+
+		/* New BootX will have flushed all TLBs and enters kernel with
+		 * MMU switched OFF, so this should not be useful anymore.
+		 */
+		if (bi->version < 4) {
+			bootx_printf("Touching pages...\n");
+
+			/*
+			 * Touch each page to make sure the PTEs for them
+			 * are in the hash table - the aim is to try to avoid
+			 * getting DSI exceptions while copying the kernel image.
+			 */
+			for (ptr = ((unsigned long) &_stext) & PAGE_MASK;
+			     ptr < (unsigned long)bi + space; ptr += PAGE_SIZE)
+				x = *(volatile unsigned long *)ptr;
+		}
+
+		/* Ok, now we need to generate a flattened device-tree to pass
+		 * to the kernel
+		 */
+		bootx_printf("Preparing boot params...\n");
+
+		hdr = bootx_flatten_dt(space);
+	} else
+		hdr = r4 + bi->deviceTreeOffset;
+
+	bootx_printf("Relocation offset: 0x%x\n", offset);
+
+	bootx_printf("Waiting some time\n");
+	{
+		unsigned int i, debug_wait = 10;
+		for (i = 0; i < 0x1000000 * debug_wait; i++) {
+		if (i % 0x1000000 == 1)
+			bootx_printf(".");
 		}
 	}
-
-	/* Get a pointer that points above the device tree, args, ramdisk,
-	 * etc... to use for generating the flattened tree
-	 */
-	if (bi->version < 5) {
-		space = bi->deviceTreeOffset + bi->deviceTreeSize;
-		if (bi->ramDisk >= space)
-			space = bi->ramDisk + bi->ramDiskSize;
-	} else
-		space = bi->totalParamsSize;
-
-	bootx_printf("Total space used by parameters & ramdisk: 0x%x\n", space);
-
-	/* New BootX will have flushed all TLBs and enters kernel with
-	 * MMU switched OFF, so this should not be useful anymore.
-	 */
-	if (bi->version < 4) {
-		bootx_printf("Touching pages...\n");
-
-		/*
-		 * Touch each page to make sure the PTEs for them
-		 * are in the hash table - the aim is to try to avoid
-		 * getting DSI exceptions while copying the kernel image.
-		 */
-		for (ptr = ((unsigned long) &_stext) & PAGE_MASK;
-		     ptr < (unsigned long)bi + space; ptr += PAGE_SIZE)
-			x = *(volatile unsigned long *)ptr;
-	}
-
-	/* Ok, now we need to generate a flattened device-tree to pass
-	 * to the kernel
-	 */
-	bootx_printf("Preparing boot params...\n");
-
-	hdr = bootx_flatten_dt(space);
+	bootx_printf("\nReady, relaunching kernel...\n");
 
 #ifdef CONFIG_BOOTX_TEXT
 #ifdef SET_BOOT_BAT

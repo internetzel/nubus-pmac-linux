@@ -87,9 +87,15 @@ struct fb_info_valkyrie {
 	struct fb_info		info;
 	struct fb_par_valkyrie	par;
 	struct cmap_regs	__iomem *cmap_regs;
+#ifdef CONFIG_NBPMAC
+	struct nbpmac_cmap_regs	__iomem *nbpmac_cmap_regs;
+#endif
 	unsigned long		cmap_regs_phys;
 	
 	struct valkyrie_regs	__iomem *valkyrie_regs;
+#ifdef CONFIG_NBPMAC
+	struct nbpmac_valkyrie_regs	__iomem *nbpmac_valkyrie_regs;
+#endif
 	unsigned long		valkyrie_regs_phys;
 	
 	__u8			__iomem *frame_buffer;
@@ -99,6 +105,9 @@ struct fb_info_valkyrie {
 	unsigned long		total_vram;
 
 	u32			pseudo_palette[16];
+#ifdef CONFIG_NBPMAC
+	u8			is_nbpmac;
+#endif
 };
 
 /*
@@ -139,6 +148,9 @@ static int valkyriefb_set_par(struct fb_info *info)
 {
 	struct fb_info_valkyrie *p = (struct fb_info_valkyrie *) info;
 	volatile struct valkyrie_regs __iomem *valkyrie_regs = p->valkyrie_regs;
+#ifdef CONFIG_NBPMAC
+	volatile struct nbpmac_valkyrie_regs __iomem *nbpmac_valkyrie_regs = p->nbpmac_valkyrie_regs;
+#endif
 	struct fb_par_valkyrie *par = info->par;
 	struct valkyrie_regvals	*init;
 	int err;
@@ -149,19 +161,41 @@ static int valkyriefb_set_par(struct fb_info *info)
 	valkyrie_par_to_fix(par, &info->fix);
 
 	/* Reset the valkyrie */
-	out_8(&valkyrie_regs->status.r, 0);
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0)
+#endif
+		out_8(&valkyrie_regs->status.r, 0);
+#ifdef CONFIG_NBPMAC
+	else
+		out_8(&nbpmac_valkyrie_regs->status.r, 0);
+#endif
 	udelay(100);
 
 	/* Initialize display timing registers */
 	init = par->init;
-	out_8(&valkyrie_regs->mode.r, init->mode | 0x80);
-	out_8(&valkyrie_regs->depth.r, par->cmode + 3);
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0) {
+#endif
+		out_8(&valkyrie_regs->mode.r, init->mode | 0x80);
+		out_8(&valkyrie_regs->depth.r, par->cmode + 3);
+#ifdef CONFIG_NBPMAC
+	} else {
+		out_8(&nbpmac_valkyrie_regs->mode.r, init->mode | 0x80);
+		out_8(&nbpmac_valkyrie_regs->depth.r, par->cmode + 3);
+	}
+#endif
 	set_valkyrie_clock(init->clock_params);
 	udelay(100);
 
 	/* Turn on display */
-	out_8(&valkyrie_regs->mode.r, init->mode);
-
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0)
+#endif
+		out_8(&valkyrie_regs->mode.r, init->mode);
+#ifdef CONFIG_NBPMAC
+	else
+		out_8(&nbpmac_valkyrie_regs->mode.r, init->mode);
+#endif
 	return 0;
 }
 
@@ -204,7 +238,14 @@ static int valkyriefb_blank(int blank_mode, struct fb_info *info)
 
 	switch (blank_mode) {
 	case FB_BLANK_UNBLANK:			/* unblank */
-		out_8(&p->valkyrie_regs->mode.r, init->mode);
+#ifdef CONFIG_NBPMAC
+		if (p->is_nbpmac == 0)
+#endif
+			out_8(&p->valkyrie_regs->mode.r, init->mode);
+#ifdef CONFIG_NBPMAC
+		else
+			out_8(&p->nbpmac_valkyrie_regs->mode.r, init->mode);
+#endif
 		break;
 	case FB_BLANK_NORMAL:
 		return 1;	/* get caller to set CLUT to all black */
@@ -215,10 +256,24 @@ static int valkyriefb_blank(int blank_mode, struct fb_info *info)
 		 * whether this bit disables hsync or vsync, or
 		 * whether the hardware can do the other as well.
 		 */
-		out_8(&p->valkyrie_regs->mode.r, init->mode | 0x40);
+#ifdef CONFIG_NBPMAC
+		if (p->is_nbpmac == 0)
+#endif
+			out_8(&p->valkyrie_regs->mode.r, init->mode | 0x40);
+#ifdef CONFIG_NBPMAC
+		else
+			out_8(&p->nbpmac_valkyrie_regs->mode.r, init->mode | 0x40);
+#endif
 		break;
 	case FB_BLANK_POWERDOWN:
-		out_8(&p->valkyrie_regs->mode.r, 0x66);
+#ifdef CONFIG_NBPMAC
+		if (p->is_nbpmac == 0)
+#endif
+			out_8(&p->valkyrie_regs->mode.r, 0x66);
+#ifdef CONFIG_NBPMAC
+		else
+			out_8(&p->nbpmac_valkyrie_regs->mode.r, 0x66);
+#endif
 		break;
 	}
 	return 0;
@@ -229,6 +284,9 @@ static int valkyriefb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 {
 	struct fb_info_valkyrie *p = (struct fb_info_valkyrie *) info;
 	volatile struct cmap_regs __iomem *cmap_regs = p->cmap_regs;
+#ifdef CONFIG_NBPMAC
+	volatile struct nbpmac_cmap_regs __iomem *nbpmac_cmap_regs = p->nbpmac_cmap_regs;
+#endif
 	struct fb_par_valkyrie *par = info->par;
 
 	if (regno > 255)
@@ -238,12 +296,29 @@ static int valkyriefb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 	blue >>= 8;
 
 	/* tell clut which address to fill */
-	out_8(&p->cmap_regs->addr, regno);
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0)
+#endif
+		out_8(&p->cmap_regs->addr, regno);
+#ifdef CONFIG_NBPMAC
+	else
+		out_8(&p->nbpmac_cmap_regs->addr, regno);
+#endif
 	udelay(1);
 	/* send one color channel at a time */
-	out_8(&cmap_regs->lut, red);
-	out_8(&cmap_regs->lut, green);
-	out_8(&cmap_regs->lut, blue);
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0) {
+#endif
+		out_8(&cmap_regs->lut, red);
+		out_8(&cmap_regs->lut, green);
+		out_8(&cmap_regs->lut, blue);
+#ifdef CONFIG_NBPMAC
+	} else {
+		out_8(&nbpmac_cmap_regs->lut, red);
+		out_8(&nbpmac_cmap_regs->lut, green);
+		out_8(&nbpmac_cmap_regs->lut, blue);
+	}
+#endif
 
 	if (regno < 16 && par->cmode == CMODE_16)
 		((u32 *)info->pseudo_palette)[regno] =
@@ -264,10 +339,10 @@ static inline int valkyrie_vram_reqd(int video_mode, int color_mode)
 
 static void set_valkyrie_clock(unsigned char *params)
 {
+#ifdef CONFIG_ADB_CUDA
 	struct adb_request req;
 	int i;
 
-#ifdef CONFIG_ADB_CUDA
 	for (i = 0; i < 3; ++i) {
 		cuda_request(&req, NULL, 5, CUDA_PACKET, CUDA_GET_SET_IIC,
 			     0x50, i + 1, params[i]);
@@ -316,7 +391,7 @@ static void __init valkyrie_choose_mode(struct fb_info_valkyrie *p)
 int __init valkyriefb_init(void)
 {
 	struct fb_info_valkyrie	*p;
-	unsigned long frame_buffer_phys, cmap_regs_phys, flags;
+	unsigned long frame_buffer_phys, cmap_regs_phys, valkyrie_regs_phys, flags;
 	int err;
 	char *option = NULL;
 
@@ -335,11 +410,16 @@ int __init valkyriefb_init(void)
 	/* Hardcoded addresses... welcome to 68k Macintosh country :-) */
 	frame_buffer_phys = 0xf9000000;
 	cmap_regs_phys = 0x50f24000;
+	valkyrie_regs_phys = cmap_regs_phys + 0x6000;
 	flags = IOMAP_NOCACHE_SER; /* IOMAP_WRITETHROUGH?? */
 #else /* ppc (!CONFIG_MAC) */
 	{
 		struct device_node *dp;
 		struct resource r;
+#ifdef CONFIG_NBPMAC
+		const u32 *up;
+		unsigned int len;
+#endif /* CONFIG_NBPMAC */
 
 		dp = of_find_node_by_name(NULL, "valkyrie");
 		if (dp == 0)
@@ -350,8 +430,34 @@ int __init valkyriefb_init(void)
 			return 0;
 		}
 
-		frame_buffer_phys = r.start;
-		cmap_regs_phys = r.start + 0x304000;
+#ifdef CONFIG_NBPMAC
+		/* For NuBus PPC Performas */
+		if (of_machine_is_compatible("Performa")) {
+			/* 1st entry in reg property contains color map register */
+			cmap_regs_phys = r.start;
+
+			/* address property contains frame buffer address */
+			up = of_get_property(dp, "address", &len);
+			if (!up || len != sizeof(u32)) {
+				printk(KERN_ERR "can't find address for valkyrie framebuffer\n");
+				return 0;
+			}
+			frame_buffer_phys = *up;
+
+			/* 2nd entry in reg property contains other valkyrie registers */
+			if (of_address_to_resource(dp, 1, &r)) {
+				printk(KERN_ERR "can't find address for valkyrie registers\n");
+				return 0;
+			}
+			valkyrie_regs_phys = r.start;
+		} else {
+#endif /* CONFIG_NBPMAC */
+			frame_buffer_phys = r.start;
+			cmap_regs_phys = r.start + 0x304000;
+			valkyrie_regs_phys = cmap_regs_phys + 0x6000;
+#ifdef CONFIG_NBPMAC
+		}
+#endif /* CONFIG_NBPMAC */
 		flags = _PAGE_WRITETHRU;
 	}
 #endif /* ppc (!CONFIG_MAC) */
@@ -367,14 +473,47 @@ int __init valkyriefb_init(void)
 	}
 	p->total_vram = 0x100000;
 	p->frame_buffer_phys = frame_buffer_phys;
-	p->frame_buffer = __ioremap(frame_buffer_phys, p->total_vram, flags);
+#ifdef CONFIG_NBPMAC
+	if (!of_machine_is_compatible("Performa")) {
+#endif
+		p->frame_buffer = __ioremap(frame_buffer_phys, p->total_vram, flags);
+#ifdef CONFIG_NBPMAC
+		p->is_nbpmac = 0;
+	} else {
+		p->frame_buffer = ioremap(frame_buffer_phys, p->total_vram); /* Necessary? */
+		p->is_nbpmac = 1;
+	}
+#endif
 	p->cmap_regs_phys = cmap_regs_phys;
-	p->cmap_regs = ioremap(p->cmap_regs_phys, 0x1000);
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0)
+#endif
+		p->cmap_regs = ioremap(p->cmap_regs_phys, 0x1000);
+#ifdef CONFIG_NBPMAC
+	else
+		p->nbpmac_cmap_regs = ioremap(p->cmap_regs_phys, 0x1000);
+#endif
+	/* What about doing it this way? */
+/*
 	p->valkyrie_regs_phys = cmap_regs_phys+0x6000;
-	p->valkyrie_regs = ioremap(p->valkyrie_regs_phys, 0x1000);
+*/
+	p->valkyrie_regs_phys = valkyrie_regs_phys;
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0)
+#endif
+		p->valkyrie_regs = ioremap(p->valkyrie_regs_phys, 0x1000);
+#ifdef CONFIG_NBPMAC
+	else
+		p->nbpmac_valkyrie_regs = ioremap(p->valkyrie_regs_phys, 0x1000);
+#endif
 	err = -ENOMEM;
+#ifndef CONFIG_NBPMAC
 	if (p->frame_buffer == NULL || p->cmap_regs == NULL
 	    || p->valkyrie_regs == NULL) {
+#else
+	if (p->frame_buffer == NULL || (p->cmap_regs == NULL && p->nbpmac_cmap_regs == NULL)
+	    || (p->valkyrie_regs == NULL && p->nbpmac_valkyrie_regs == NULL)) {
+#endif
 		printk(KERN_ERR "valkyriefb: couldn't map resources\n");
 		goto out_free;
 	}
@@ -404,6 +543,12 @@ int __init valkyriefb_init(void)
 		iounmap(p->cmap_regs);
 	if (p->valkyrie_regs)
 		iounmap(p->valkyrie_regs);
+#ifdef CONFIG_NBPMAC
+	if (p->nbpmac_cmap_regs)
+		iounmap(p->nbpmac_cmap_regs);
+	if (p->nbpmac_valkyrie_regs)
+		iounmap(p->nbpmac_valkyrie_regs);
+#endif
 	kfree(p);
 	return err;
 }
@@ -415,6 +560,9 @@ static int read_valkyrie_sense(struct fb_info_valkyrie *p)
 {
 	int sense, in;
 
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0) {
+#endif
 	out_8(&p->valkyrie_regs->msense.r, 0);   /* release all lines */
 	__delay(20000);
 	sense = ((in = in_8(&p->valkyrie_regs->msense.r)) & 0x70) << 4;
@@ -431,6 +579,26 @@ static int read_valkyrie_sense(struct fb_info_valkyrie *p)
 	sense |= ((in = in_8(&p->valkyrie_regs->msense.r)) & 0x60) >> 5;
 
 	out_8(&p->valkyrie_regs->msense.r, 7);
+#ifdef CONFIG_NBPMAC
+	} else {
+	out_8(&p->nbpmac_valkyrie_regs->msense.r, 0);   /* release all lines */
+	__delay(20000);
+	sense = ((in = in_8(&p->nbpmac_valkyrie_regs->msense.r)) & 0x70) << 4;
+	/* drive each sense line low in turn and collect the other 2 */
+	out_8(&p->nbpmac_valkyrie_regs->msense.r, 4);   /* drive A low */
+	__delay(20000);
+	sense |= ((in = in_8(&p->nbpmac_valkyrie_regs->msense.r)) & 0x30);
+	out_8(&p->nbpmac_valkyrie_regs->msense.r, 2);   /* drive B low */
+	__delay(20000);
+	sense |= ((in = in_8(&p->nbpmac_valkyrie_regs->msense.r)) & 0x40) >> 3;
+	sense |= (in & 0x10) >> 2;
+	out_8(&p->nbpmac_valkyrie_regs->msense.r, 1);   /* drive C low */
+	__delay(20000);
+	sense |= ((in = in_8(&p->nbpmac_valkyrie_regs->msense.r)) & 0x60) >> 5;
+
+	out_8(&p->nbpmac_valkyrie_regs->msense.r, 7);
+	}
+#endif
 
 	return sense;
 }
@@ -519,7 +687,14 @@ static void valkyrie_init_fix(struct fb_fix_screeninfo *fix, struct fb_info_valk
 	memset(fix, 0, sizeof(*fix));
 	strcpy(fix->id, "valkyrie");
 	fix->mmio_start = p->valkyrie_regs_phys;
-	fix->mmio_len = sizeof(struct valkyrie_regs);
+#ifdef CONFIG_NBPMAC
+	if (p->is_nbpmac == 0)
+#endif
+		fix->mmio_len = sizeof(struct valkyrie_regs);
+#ifdef CONFIG_NBPMAC
+	else
+		fix->mmio_len = sizeof(struct nbpmac_valkyrie_regs);
+#endif
 	fix->type = FB_TYPE_PACKED_PIXELS;
 	fix->smem_start = p->frame_buffer_phys + 0x1000;
 	fix->smem_len = p->total_vram;

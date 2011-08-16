@@ -44,6 +44,14 @@
 #include <asm/siginfo.h>
 #include <mm/mmu_decl.h>
 
+/* Do we really need it? */
+#if 0
+/* TODO: FB OK? */
+#ifdef CONFIG_NBPMAC
+extern void (*nubus_fault_handler)(struct pt_regs *);
+#endif
+#endif
+
 #ifdef CONFIG_KPROBES
 static inline int notify_page_fault(struct pt_regs *regs)
 {
@@ -142,6 +150,17 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 #else
 	is_write = error_code & ESR_DST;
 #endif /* CONFIG_4xx || CONFIG_BOOKE */
+
+/* Do we really need it? */
+#if 0
+/* TODO: FB OK? What about XMON fault handler at the same time below? */
+#ifdef CONFIG_NBPMAC
+    if (nubus_fault_handler && trap == 0x300) {
+        nubus_fault_handler(regs);
+        return 0;
+    }
+#endif
+#endif
 
 	if (notify_page_fault(regs))
 		return 0;

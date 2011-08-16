@@ -1475,7 +1475,10 @@ static int __init pmz_init_port(struct uart_pmac_port *uap)
 	uap->port.membase = ioremap(uap->port.mapbase, 0x1000);
 
 	uap->control_reg = uap->port.membase;
-	uap->data_reg = uap->control_reg + 0x10;
+	if (!(of_device_is_compatible(np, "pre_pci")))
+		uap->data_reg = uap->control_reg + 0x10;
+	else
+		uap->data_reg = uap->control_reg + 0x4;
 	
 	/*
 	 * Request & map DBDMA registers

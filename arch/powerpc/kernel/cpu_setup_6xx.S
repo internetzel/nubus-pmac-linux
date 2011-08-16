@@ -163,7 +163,11 @@ setup_7410_workarounds:
  */
 setup_750_7400_hid0:
 	mfspr	r11,SPRN_HID0
+#ifndef CONFIG_NBPMAC
 	ori	r11,r11,HID0_SGE | HID0_ABE | HID0_BHTE | HID0_BTIC
+#else
+	ori	r11,r11,HID0_SGE | HID0_BHTE | HID0_BTIC
+#endif
 	oris	r11,r11,HID0_DPM@h
 BEGIN_FTR_SECTION
 	xori	r11,r11,HID0_BTIC

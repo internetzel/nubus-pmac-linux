@@ -168,8 +168,11 @@ void __init proc_bus_nubus_add_devices(void)
 
 void __init nubus_proc_init(void)
 {
+#ifdef CONFIG_MAC
 	if (!MACH_IS_MAC)
 		return;
+#endif
+
 	proc_bus_nubus_dir = proc_mkdir("bus/nubus", NULL);
 	proc_create("devices", 0, proc_bus_nubus_dir, &nubus_devices_proc_fops);
 	proc_bus_nubus_add_devices();

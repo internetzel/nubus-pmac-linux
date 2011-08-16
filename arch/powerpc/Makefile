@@ -165,7 +165,7 @@ drivers-$(CONFIG_OPROFILE)	+= arch/powerpc/oprofile/
 all: zImage
 
 # With make 3.82 we cannot mix normal and wildcard targets
-BOOT_TARGETS1 := zImage zImage.initrd uImage
+BOOT_TARGETS1 := zImage zImage.initrd uImage MachKernel MachKernel.initrd
 BOOT_TARGETS2 := zImage% dtbImage% treeImage.% cuImage.% simpleImage.%
 
 PHONY += $(BOOT_TARGETS1) $(BOOT_TARGETS2)
@@ -175,10 +175,10 @@ boot := arch/$(ARCH)/boot
 ifeq ($(CONFIG_RELOCATABLE),y)
 quiet_cmd_relocs_check = CALL    $<
       cmd_relocs_check = perl $< "$(OBJDUMP)" "$(obj)/vmlinux"
-
+ 
 PHONY += relocs_check
 relocs_check: arch/powerpc/relocs_check.pl vmlinux
-	$(call cmd,relocs_check)
+      $(call cmd,relocs_check)
 
 zImage: relocs_check
 endif

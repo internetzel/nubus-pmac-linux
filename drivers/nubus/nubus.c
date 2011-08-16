@@ -19,13 +19,29 @@
 #include <asm/setup.h>
 #include <asm/system.h>
 #include <asm/page.h>
-#include <asm/hwtest.h>
 #include <linux/proc_fs.h>
+#ifndef CONFIG_NBPMAC
+#include <asm/hwtest.h>
 #include <asm/mac_via.h>
 #include <asm/mac_oss.h>
 
 extern void via_nubus_init(void);
 extern void oss_nubus_init(void);
+#else
+#include <linux/of.h>
+
+unsigned char *nubus_slot_map[16] = {NULL,};
+static void nubus_free (int slot)
+{
+	if (!nubus_slot_map[slot])
+		return;
+	iounmap((void *)nubus_slot_map[slot]);
+	nubus_slot_map[slot] = NULL;
+}
+
+static int nubus_no_probe = 0;
+static int nubus_setup(char *options);
+#endif
 
 /* Constants */
 
@@ -161,7 +177,11 @@ static inline void *nubus_rom_addr(int slot)
 	 *	Returns the first byte after the card. We then walk
 	 *	backwards to get the lane register and the config
 	 */
+#ifndef CONFIG_NBPMAC
 	return (void *)(0xF1000000+(slot<<24));
+#else
+	return (void *)((unsigned long)nubus_slot_addr(slot) + NUBUS_IO_SIZE);
+#endif
 }
 
 static unsigned char *nubus_dirptr(const struct nubus_dirent *nd)
@@ -953,6 +973,11 @@ void __init nubus_probe_slot(int slot)
 
 		return;
 	}
+
+/* TODO: FB OK? */
+#ifdef CONFIG_NBPMAC
+	nubus_free(slot);
+#endif
 }
 
 #if defined(CONFIG_PROC_FS)
@@ -1020,6 +1045,7 @@ void __init nubus_scan_bus(void)
 
 static int __init nubus_init(void)
 {
+#ifndef CONFIG_NBPMAC
 	if (!MACH_IS_MAC) 
 		return 0;
 
@@ -1029,6 +1055,16 @@ static int __init nubus_init(void)
 	} else {
 		via_nubus_init();
 	}
+#else
+	struct device_node *device = NULL;
+
+	if (nubus_no_probe)
+		return 0;
+
+	device = of_find_node_by_type(NULL, "nubus");
+	if (device == NULL)
+		return 0;
+#endif
 
 #ifdef TRY_TO_DODGE_WSOD
 	/* Rogue Ethernet interrupts can kill the machine if we don't
@@ -1049,5 +1085,30 @@ static int __init nubus_init(void)
 #endif
 	return 0;
 }
+
+/* TODO: FB OK? Make kernel option 'nubus' working again */
+#ifdef CONFIG_NBPMAC
+__setup("nubus=", nubus_setup);
+
+static int __init nubus_setup(char *options)
+{
+	//char *this_opt;
+
+	if (!options || !*options)
+		return 0;
+
+#if 0
+	for (this_opt = strtok(options, ","); this_opt;
+			this_opt = strtok(NULL, ",")) {
+		if (!strncmp(this_opt, "off", 3))
+			nubus_no_probe = 1;
+	}
+#endif
+	if (strstr(options, "off"))
+		nubus_no_probe = 1;
+
+	return 0;
+}
+#endif
 
 subsys_initcall(nubus_init);

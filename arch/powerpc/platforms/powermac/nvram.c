@@ -77,7 +77,7 @@ static int nvram_naddrs;
 static volatile unsigned char __iomem *nvram_data;
 static int is_core_99;
 static int core99_bank = 0;
-static int nvram_partitions[3];
+static int nvram_partitions[3] = {-1, -1, -1};
 // XXX Turn that into a sem
 static DEFINE_RAW_SPINLOCK(nv_lock);
 

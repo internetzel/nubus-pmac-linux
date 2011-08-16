@@ -351,6 +351,11 @@ static void offb_init_palette_hacks(struct fb_info *info, struct device_node *dp
 			ioremap(base + 0x7ff000, 0x1000) + 0xcc0;
 		par->cmap_data = par->cmap_adr + 1;
 		par->cmap_type = cmap_m64;
+	} else if (dp && !strncmp(name, "ecsc", 4)) {
+		printk(KERN_DEBUG "offb: Installing palette hack for ECSC\n");
+		par->cmap_adr = offb_map_reg(dp, 0, 0x40, 0x7);
+		par->cmap_data = par->cmap_adr + 2;
+		par->cmap_type = cmap_m64;
 	} else if (dp && (of_device_is_compatible(dp, "pci1014,b7") ||
 			  of_device_is_compatible(dp, "pci1014,21c"))) {
 		par->cmap_adr = offb_map_reg(dp, 0, 0x6000, 0x1000);

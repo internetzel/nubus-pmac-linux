@@ -90,7 +90,9 @@ EXPORT_SYMBOL_GPL(macio_find);
 static const char *macio_names[] =
 {
 	"Unknown",
-	"Grand Central",
+	"Whitney",
+	"Prime-Time2",
+	"AMIC",
 	"OHare",
 	"OHareII",
 	"Heathrow",
@@ -2440,6 +2442,20 @@ static int __init probe_motherboard(void)
 
 	/* Fallback to selection depending on mac-io chip type */
 	switch(macio->type) {
+#ifdef CONFIG_NBPMAC
+	    case macio_whitney:
+		pmac_mb.model_id = PMAC_TYPE_M2;
+		pmac_mb.model_name = "Unknown M2";
+		break;
+	    case macio_prime_time:
+		pmac_mb.model_id = PMAC_TYPE_PERFORMA;
+		pmac_mb.model_name = "Unknown Performa";
+		break;
+	    case macio_amic:
+		pmac_mb.model_id = PMAC_TYPE_PDM;
+		pmac_mb.model_name = "Unknown PDM";
+		break;
+#endif
 #ifndef CONFIG_POWER4
 	    case macio_grand_central:
 		pmac_mb.model_id = PMAC_TYPE_PSURGE;
@@ -2660,6 +2676,12 @@ static void __init probe_one_macio(const char *name, const char *compat, int typ
 		printk(KERN_ERR "pmac_feature: %s skipped\n", node->full_name);
 		return;
 	}
+#ifdef CONFIG_NBPMAC
+	if (type == macio_whitney || type == macio_prime_time || type == macio_amic) {
+		base = NULL;
+		goto skip_address_mapping;
+	}
+#endif
 	addrp = of_get_pci_address(node, 0, &size, NULL);
 	if (addrp == NULL) {
 		printk(KERN_ERR "pmac_feature: %s: can't find base !\n",
@@ -2687,6 +2709,9 @@ static void __init probe_one_macio(const char *name, const char *compat, int typ
 		if (*did == 0x0000004f)
 			type = macio_shasta;
 	}
+#ifdef CONFIG_NBPMAC
+skip_address_mapping:
+#endif
 	macio_chips[i].of_node	= node;
 	macio_chips[i].type	= type;
 	macio_chips[i].base	= base;
@@ -2703,7 +2728,11 @@ static int __init
 probe_macios(void)
 {
 	/* Warning, ordering is important */
-	probe_one_macio("gc", NULL, macio_grand_central);
+#ifdef CONFIG_NBPMAC
+	probe_one_macio("whitney", NULL, macio_whitney);
+	probe_one_macio("prime-time2", NULL, macio_prime_time);
+	probe_one_macio("amic-io", NULL, macio_amic);
+#endif
 	probe_one_macio("ohare", NULL, macio_ohare);
 	probe_one_macio("pci106b,7", NULL, macio_ohareII);
 	probe_one_macio("mac-io", "keylargo", macio_keylargo);

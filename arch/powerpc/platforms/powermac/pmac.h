@@ -3,6 +3,9 @@
 
 #include <linux/pci.h>
 #include <linux/irq.h>
+#ifdef CONFIG_NBPMAC
+#include "nbpmac.h"
+#endif /* CONFIG_NBPMAC */
 
 /*
  * Declaration for the various functions exported by the

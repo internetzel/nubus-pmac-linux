@@ -35,6 +35,10 @@
 
 #define MAX_NODE_NAME_SIZE (20 - 12)
 
+#ifdef CONFIG_NBPMAC
+static void macio_pci_add_devices(struct macio_chip *chip);
+#endif
+
 static struct macio_chip      *macio_on_hold;
 
 static int macio_bus_match(struct device *dev, struct device_driver *drv) 
@@ -148,7 +152,30 @@ struct bus_type macio_bus_type = {
 
 static int __init macio_bus_driver_init(void)
 {
+#ifdef CONFIG_NBPMAC
+	struct macio_chip *chip;
+	int i, retval;
+
+	retval = bus_register(&macio_bus_type);
+
+	/*
+	 * On NuBus PMacs we probe now because
+	 * we don't have nor need any bus controller driver
+	 */
+	for (i = 0; i < MAX_MACIO_CHIPS; i++) {
+		chip = &macio_chips[i];
+		if (chip->type == macio_whitney ||
+		    chip->type == macio_prime_time ||
+		    chip->type == macio_amic) {
+			chip->lbus.chip = chip;
+			macio_pci_add_devices(chip);
+		}
+	}
+
+	return retval;
+#else
 	return bus_register(&macio_bus_type);
+#endif
 }
 
 postcore_initcall(macio_bus_driver_init);
@@ -390,7 +417,13 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 	 *
 	 * To get all the fields, copy all archdata
 	 */
-	dev->ofdev.dev.archdata = chip->lbus.pdev->dev.archdata;
+#ifdef CONFIG_NBPMAC
+	if (chip->lbus.pdev) {
+#endif
+		dev->ofdev.dev.archdata = chip->lbus.pdev->dev.archdata;
+#ifdef CONFIG_NBPMAC
+	}
+#endif
 #endif /* CONFIG_PCI */
 
 #ifdef DEBUG
@@ -399,7 +432,7 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 #endif
 
 	/* MacIO itself has a different reg, we use it's PCI base */
-	if (np == chip->of_node) {
+	if (np == chip->of_node && chip->lbus.pdev) {
 		dev_set_name(&dev->ofdev.dev, "%1d.%08x:%.*s",
 			     chip->lbus.index,
 #ifdef CONFIG_PCI

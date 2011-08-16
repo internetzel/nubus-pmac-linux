@@ -46,7 +46,9 @@ $(obj)/cuboot-acadia.o: BOOTCFLAGS += -mcpu=405
 $(obj)/treeboot-walnut.o: BOOTCFLAGS += -mcpu=405
 $(obj)/treeboot-iss4xx.o: BOOTCFLAGS += -mcpu=405
 $(obj)/virtex405-head.o: BOOTAFLAGS += -mcpu=405
-
+$(obj)/appleboot-dummy.o: BOOTAFLAGS += -DRAMDISK_SIZE=0
+$(obj)/appleboot-dummy_initrd.o: BOOTAFLAGS += -DRAMDISK_SIZE=`sh $(srctree)/$(obj)/appleboot-size $(obj)/ramdisk.image.gz`
+$(obj)/appleboot-misc.o: BOOTCFLAGS += -DKERNEL_END=`sh $(srctree)/$(obj)/appleboot-last System.map`
 
 zlib       := inffast.c inflate.c inftrees.c
 zlibheader := inffast.h inffixed.h inflate.h inftrees.h infutil.h
@@ -79,7 +81,9 @@ src-plat := of.c cuboot-52xx.c cuboot-824x.c cuboot-83xx.c cuboot-85xx.c holly.c
 		cuboot-warp.c cuboot-85xx-cpm2.c cuboot-yosemite.c simpleboot.c \
 		virtex405-head.S virtex.c redboot-83xx.c cuboot-sam440ep.c \
 		cuboot-acadia.c cuboot-amigaone.c cuboot-kilauea.c \
-		gamecube-head.S gamecube.c wii-head.S wii.c treeboot-iss4xx.c
+		gamecube-head.S gamecube.c wii-head.S wii.c treeboot-iss4xx.c\
+		appleboot-dummy.S appleboot-dummy_initrd.S appleboot-head.S \
+		appleboot-mem_pieces.c appleboot-misc.c
 src-boot := $(src-wlib) $(src-plat) empty.c
 
 src-boot := $(addprefix $(obj)/, $(src-boot))
@@ -114,12 +118,12 @@ $(addprefix $(obj)/,$(libfdt) $(libfdtheader)): $(obj)/%: $(srctree)/scripts/dtc
 $(obj)/empty.c:
 	@touch $@
 
-$(obj)/zImage.lds $(obj)/zImage.coff.lds $(obj)/zImage.ps3.lds: $(obj)/%: $(srctree)/$(src)/%.S
+$(obj)/zImage.lds $(obj)/zImage.coff.lds $(obj)/zImage.ps3.lds $(obj)/MachKernel.lds: $(obj)/%: $(srctree)/$(src)/%.S
 	@cp $< $@
 
 clean-files := $(zlib) $(zlibheader) $(zliblinuxheader) \
 		$(libfdt) $(libfdtheader) \
-		empty.c zImage.coff.lds zImage.ps3.lds zImage.lds
+		empty.c zImage.coff.lds zImage.ps3.lds zImage.lds MachKernel.lds
 
 quiet_cmd_bootcc = BOOTCC  $@
       cmd_bootcc = $(CROSS32CC) -Wp,-MD,$(depfile) $(BOOTCFLAGS) -c -o $@ $<
@@ -142,16 +146,18 @@ $(patsubst %.S,%.o, $(filter %.S, $(src-boot))): %.o: %.S FORCE
 $(obj)/wrapper.a: $(obj-wlib) FORCE
 	$(call if_changed,bootar)
 
-hostprogs-y	:= addnote hack-coff mktree
+hostprogs-y	:= addnote hack-coff mktree appleboot-piggyback
 
 targets		+= $(patsubst $(obj)/%,%,$(obj-boot) wrapper.a)
 extra-y		:= $(obj)/wrapper.a $(obj-plat) $(obj)/empty.o \
-		   $(obj)/zImage.lds $(obj)/zImage.coff.lds $(obj)/zImage.ps3.lds
+		   $(obj)/zImage.lds $(obj)/zImage.coff.lds $(obj)/zImage.ps3.lds \
+		   $(obj)/MachKernel.lds
 
 dtstree		:= $(srctree)/$(src)/dts
 
 wrapper		:=$(srctree)/$(src)/wrapper
-wrapperbits	:= $(extra-y) $(addprefix $(obj)/,addnote hack-coff mktree) \
+
+wrapperbits	:= $(extra-y) $(addprefix $(obj)/,addnote hack-coff mktree appleboot-piggyback) \
 			$(wrapper) FORCE
 
 #############
@@ -270,6 +276,9 @@ image-$(CONFIG_AMIGAONE)		+= cuImage.amigaone
 # as well as the ELF images.
 ifeq ($(CONFIG_PPC32),y)
 image-$(CONFIG_PPC_PMAC)	+= zImage.coff zImage.miboot
+	ifeq ($(CONFIG_MKLINUX_BOOTER),y)
+		image-$(CONFIG_PPC_PMAC)	+= MachKernel
+	endif
 endif
 
 # Allow extra targets to be added to the defconfig
@@ -333,6 +342,54 @@ $(obj)/treeImage.initrd.%: vmlinux $(obj)/%.dtb $(wrapperbits)
 $(obj)/treeImage.%: vmlinux $(obj)/%.dtb $(wrapperbits)
 	$(call if_changed,wrap,treeboot-$*,,$(obj)/$*.dtb)
 
+$(obj)/MachKernel: $(obj)/appleboot-dummy $(obj)/MachKernel.strip.gz \
+		$(obj)/miboot.image
+
+OBJCOPYFLAGS_miboot.image :=-O aixcoff-rs6000 -R .stab -R .stabstr -R .comment --add-section=image=$(obj)/MachKernel.strip.gz
+$(obj)/miboot.image: $(obj)/empty.o FORCE
+	$(call if_changed,objcopy)
+
+OBJCOPYFLAGS_MachKernel.strip :=-S -O binary
+$(obj)/MachKernel.strip: $(obj)/MachKernel.elf FORCE
+	$(call if_changed,objcopy)
+
+$(obj)/MachKernel.strip.gz: $(obj)/MachKernel.strip FORCE
+	$(call if_changed,gzip)
+
+$(obj)/MachKernel.elf: $(wrapperbits) $(obj)/NuBusPowerMac.dtb \
+			$(obj)/NuBusPowerBook.dtb $(obj)/NuBusPerforma.dtb \
+			$(obj)/NuBusDTBs
+	$(call if_changed,wrap,MachKernel)
+
+targets += appleboot-dummy
+LDFLAGS_appleboot-dummy :=-Ttext 0x0 -e start
+$(obj)/appleboot-dummy: $(obj)/appleboot-dummy.o FORCE
+	$(call if_changed,ld)
+	@cp $(obj)/appleboot-dummy $(obj)/appleboot-initrd
+	@rm -f $(obj)/appleboot-dummy_initrd.o
+
+OBJCOPYFLAGS_NuBusDTBs :=--add-section=.NuBusPowerMac=$(obj)/NuBusPowerMac.dtb \
+			--add-section=.NuBusPerforma=$(obj)/NuBusPerforma.dtb \
+			--add-section=.NuBusPowerBook=$(obj)/NuBusPowerBook.dtb
+$(obj)/NuBusDTBs: $(obj)/empty.o FORCE
+	$(call if_changed,objcopy)
+
+$(obj)/MachKernel.initrd: $(obj)/appleboot-initrd $(obj)/MachKernel.strip.gz \
+			$(obj)/ramdisk.image.gz $(obj)/miboot.image.initrd
+
+OBJCOPYFLAGS_miboot.image.initrd :=-O aixcoff-rs6000 -R .stab -R .stabstr -R .comment --add-section=initrd=$(obj)/ramdisk.image.gz
+$(obj)/miboot.image.initrd: $(obj)/miboot.image FORCE
+	$(call if_changed,objcopy)
+
+targets += appleboot-initrd
+LDFLAGS_appleboot-initrd :=-Ttext 0x0 -e start
+$(obj)/appleboot-initrd: $(obj)/appleboot-dummy_initrd.o $(obj)/appleboot-initrd.o FORCE
+	$(call if_changed,ld)
+	@rm -f $(obj)/appleboot-dummy.o
+
+$(obj)/appleboot-initrd.o: $(obj)/ramdisk.image.gz $(obj)/appleboot-piggyback
+	$(obj)/appleboot-piggyback initrd < $(obj)/ramdisk.image.gz | $(CROSS_COMPILE)as -o $@
+
 # Rule to build device tree blobs
 $(obj)/%.dtb: $(src)/dts/%.dts
 	$(call cmd,dtc)
@@ -354,7 +411,9 @@ install: $(CONFIGURE) $(addprefix $(obj)/, $(image-y))
 clean-files += $(image-) $(initrd-) cuImage.* dtbImage.* treeImage.* \
 	zImage zImage.initrd zImage.chrp zImage.coff zImage.holly \
 	zImage.iseries zImage.miboot zImage.pmac zImage.pseries \
-	zImage.maple simpleImage.* otheros.bld *.dtb
+	zImage.maple simpleImage.* otheros.bld *.dtb \
+	MachKernel* appleboot-initrd.o \
+	miboot.image miboot.image.initrd NuBusDTBs
 
 # clean up files cached by wrapper
 clean-kernel := vmlinux.strip vmlinux.bin

@@ -794,6 +794,15 @@ config BLK_DEV_MAC_IDE
 	  devices (hard disks, CD-ROM drives, etc.) that are connected to the
 	  on-board IDE interface.
 
+config BLK_DEV_NBPMAC_IDE
+	tristate "NuBus PowerMac IDE interface support"
+	depends on NBPMAC
+	help
+
+	  Say Y if you have such an Macintosh model and want to use IDE
+	  devices (hard disks, CD-ROM drives, etc.) that are connected to the
+	  on-board IDE interface.
+
 config BLK_DEV_Q40IDE
 	tristate "Q40/Q60 IDE interface support"
 	depends on Q40

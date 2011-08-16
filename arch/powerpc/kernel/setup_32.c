@@ -290,10 +290,11 @@ void __init setup_arch(char **cmdline_p)
 	loops_per_jiffy = 500000000 / HZ;
 
 	unflatten_device_tree();
-	check_for_initrd();
 
 	if (ppc_md.init_early)
 		ppc_md.init_early();
+
+	check_for_initrd();
 
 	find_legacy_serial_ports();
 
