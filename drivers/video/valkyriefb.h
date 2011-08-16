@@ -65,6 +65,7 @@ struct vpreg {			/* padded register */
 };
 
 
+
 struct valkyrie_regs {
 	struct vpreg mode;
 	struct vpreg depth;
@@ -75,6 +76,32 @@ struct valkyrie_regs {
 	struct vpreg intr_enb;
 	struct vpreg msense;
 };
+
+#ifdef CONFIG_NBPMAC
+/* Valkyrie registers are word-aligned on NuBus PowerMacs */
+
+struct nbpmac_cmap_regs {
+	unsigned char addr;
+	char pad1[3];
+	unsigned char lut;
+};
+
+struct nbpmac_vpreg {			/* padded register */
+	unsigned char r;
+	char pad[3];
+};
+
+struct nbpmac_valkyrie_regs {
+	struct nbpmac_vpreg mode;
+	struct nbpmac_vpreg depth;
+	struct nbpmac_vpreg status;
+	struct nbpmac_vpreg reg3;
+	struct nbpmac_vpreg intr;
+	struct nbpmac_vpreg reg5;
+	struct nbpmac_vpreg intr_enb;
+	struct nbpmac_vpreg msense;
+};
+#endif /* CONFIG_NBPMAC */
 
 /*
  * Register initialization tables for the valkyrie display.

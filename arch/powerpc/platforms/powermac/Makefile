@@ -19,3 +19,6 @@ obj-$(CONFIG_NVRAM:m=y)		+= nvram.o
 obj-$(CONFIG_PPC64)		+= nvram.o
 obj-$(CONFIG_PPC32)		+= bootx_init.o
 obj-$(CONFIG_SMP)		+= smp.o
+#obj-$(CONFIG_NBPMAC)            += nbpmac_m2.o nbpmac_pfm.o nbpmac_setup.o
+obj-$(CONFIG_NBPMAC)            += nbpmac_m2.o nbpmac_setup.o
+

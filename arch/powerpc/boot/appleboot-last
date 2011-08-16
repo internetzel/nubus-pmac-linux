@@ -1,0 +1,10 @@
+#!/bin/sh
+
+if [ -e $1 ]; then
+	END=`grep " A _end" $1 | awk '{ print $1 }'`
+else
+	END=0
+fi
+
+echo 0x$END
+

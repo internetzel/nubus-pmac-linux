@@ -96,6 +96,7 @@ static inline u8 read_zsreg(struct uart_pmac_port *port, u8 reg)
 {
 	if (reg != 0)
 		writeb(reg, port->control_reg);
+
 	return readb(port->control_reg);
 }
 

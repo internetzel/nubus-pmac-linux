@@ -111,11 +111,18 @@ void udbg_scc_init(int force_scc)
 	pmac_call_feature(PMAC_FTR_SCC_ENABLE, ch,
 			  PMAC_SCC_ASYNC | PMAC_SCC_FLAG_XMON, 1);
 
-	if (ch == ch_a)
-		addr += 0x20;
+	if (ch == ch_a) {
+		if (!(of_device_is_compatible(ch, "pre_pci")))
+			addr += 0x20;
+		else
+			addr += 0x2;
+	}
 	sccc = ioremap(addr & PAGE_MASK, PAGE_SIZE) ;
 	sccc += addr & ~PAGE_MASK;
-	sccd = sccc + 0x10;
+	if (!(of_device_is_compatible(ch, "pre_pci")))
+		sccd = sccc + 0x10;
+	else
+		sccd = sccc + 0x4;
 
 	mb();
 

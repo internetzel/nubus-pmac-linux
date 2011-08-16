@@ -101,10 +101,21 @@ static char *version =
 
 #include <asm/system.h>
 #include <asm/io.h>
+#ifndef CONFIG_NBPMAC
 #include <asm/hwtest.h>
 #include <asm/macints.h>
+#endif
 
 #include "cs89x0.h"
+
+#ifdef CONFIG_NBPMAC
+#undef LOCK
+#ifdef LOCK
+#include <linux/spinlock.h>
+#endif
+extern int nbpmac_slot2irq(int);
+#define SLOT2IRQ(SLOT)	nbpmac_slot2irq(SLOT)
+#endif
 
 static unsigned int net_debug = NET_DEBUG;
 
@@ -118,6 +129,9 @@ struct net_local {
 	int curr_rx_cfg;
         int send_underrun;      /* keep track of how many underruns in a row we get */
 	struct sk_buff *skb;
+#ifdef LOCK
+	spinlock_t lock;
+#endif
 };
 
 /* Index to functions, as function prototypes. */
@@ -157,13 +171,21 @@ writereg_io(struct net_device *dev, int portno, int value)
 static inline int
 readreg(struct net_device *dev, int portno)
 {
+#ifdef CONFIG_NBPMAC
+	return readreg_io(dev, portno);
+#else
 	return swab16(nubus_readw(dev->mem_start + portno));
+#endif
 }
 
 static inline void
 writereg(struct net_device *dev, int portno, int value)
 {
+#ifdef CONFIG_NBPMAC
+	writereg_io(dev, portno, value);
+#else
 	nubus_writew(swab16(value), dev->mem_start + portno);
+#endif
 }
 
 static const struct net_device_ops mac89x0_netdev_ops = {
@@ -185,14 +207,23 @@ struct net_device * __init mac89x0_probe(int unit)
 	static int once_is_enough;
 	struct net_local *lp;
 	static unsigned version_printed;
-	int i, slot;
+	int i;
+#ifndef CONFIG_NBPMAC
+	int slot;
+#endif
 	unsigned rev_type = 0;
-	unsigned long ioaddr;
+	unsigned long ioaddr = 0;
 	unsigned short sig;
 	int err = -ENODEV;
 
+#ifdef CONFIG_NBPMAC
+	struct nubus_dev * ndev = NULL;
+	struct nubus_dir dir;
+	struct nubus_dirent ent;
+#else
 	if (!MACH_IS_MAC)
 		return ERR_PTR(-ENODEV);
+#endif
 
 	dev = alloc_etherdev(sizeof(struct net_local));
 	if (!dev)
@@ -207,6 +238,35 @@ struct net_device * __init mac89x0_probe(int unit)
 		goto out;
 	once_is_enough = 1;
 
+#ifdef CONFIG_NBPMAC
+	/* Detect all Ethernet cards, figure out which one is ours */
+	while ((ndev = nubus_find_type(NUBUS_CAT_NETWORK,
+				       NUBUS_TYPE_ETHERNET, ndev)) != NULL)
+	{
+		/* Now do the hardware-specific stuff */
+		printk(KERN_INFO "mac89x0: Found a %s in slot %X\n",
+		       ndev->board->name, ndev->board->slot);
+		ioaddr = ndev->board->slot_addr + 0x600000;
+
+		/* Get the functional resource for this device */
+		if (nubus_get_func_dir(ndev, &dir) == -1)
+			goto out;
+		if (nubus_find_rsrc(&dir, NUBUS_RESID_MAC_ADDRESS, &ent) == -1)
+			goto out;
+
+		nubus_get_rsrc_mem(dev->dev_addr, &ent, 6);
+
+		/* print the ethernet address. */
+		printk(KERN_INFO "mac89x0: MAC address in NuBus ROM: ");
+		for (i = 0; i < ETH_ALEN; i++)
+			printk("%2.2x%s", dev->dev_addr[i],
+			       ((i < ETH_ALEN-1) ? ":" : ""));
+		printk("\n");
+
+		dev->irq = SLOT2IRQ(ndev->board->slot);
+		irq_create_mapping(NULL, dev->irq);
+	}
+#else
 	/* We might have to parameterize this later */
 	slot = 0xE;
 	/* Get out now if there's a real NuBus card in slot E */
@@ -217,6 +277,7 @@ struct net_device * __init mac89x0_probe(int unit)
            wonder why...) */
 	ioaddr = (unsigned long)
 		nubus_slot_addr(slot) | (((slot&0xf) << 20) + DEFAULTIOBASE);
+#endif
 	{
 		unsigned long flags;
 		int card_present;
@@ -226,14 +287,18 @@ struct net_device * __init mac89x0_probe(int unit)
 				hwreg_present((void*) ioaddr + DATA_PORT));
 		local_irq_restore(flags);
 
-		if (!card_present)
+		if (!card_present) {
+			printk(KERN_DEBUG "mac89x0: can't access registers!\n");
 			goto out;
+		}
 	}
 
 	nubus_writew(0, ioaddr + ADD_PORT);
 	sig = nubus_readw(ioaddr + DATA_PORT);
-	if (sig != swab16(CHIP_EISA_ID_SIG))
+	if (sig != swab16(CHIP_EISA_ID_SIG)) {
+		printk(KERN_DEBUG "mac89x0: found signature 0x%x instead of 0x%x\n", sig, swab16(CHIP_EISA_ID_SIG));
 		goto out;
+	}
 
 	/* Initialize the net_device structure. */
 	lp = netdev_priv(dev);
@@ -241,7 +306,11 @@ struct net_device * __init mac89x0_probe(int unit)
 	/* Fill in the 'dev' fields. */
 	dev->base_addr = ioaddr;
 	dev->mem_start = (unsigned long)
+#ifndef CONFIG_NBPMAC
 		nubus_slot_addr(slot) | (((slot&0xf) << 20) + MMIOBASE);
+#else
+		(dev->base_addr & 0xffff0000) + MMIOBASE;
+#endif
 	dev->mem_end = dev->mem_start + 0x1000;
 
 	/* Turn on shared memory */
@@ -270,6 +339,7 @@ struct net_device * __init mac89x0_probe(int unit)
 	       lp->chip_revision,
 	       dev->base_addr);
 
+#ifndef CONFIG_NBPMAC
 	/* Try to read the MAC address */
 	if ((readreg(dev, PP_SelfST) & (EEPROM_PRESENT | EEPROM_OK)) == 0) {
 		printk("\nmac89x0: No EEPROM, giving up now.\n");
@@ -284,6 +354,9 @@ struct net_device * __init mac89x0_probe(int unit)
         }
 
 	dev->irq = SLOT2IRQ(slot);
+#elif defined(LOCK)
+	spin_lock_init(&lp->lock);
+#endif
 
 	/* print the IRQ and ethernet address. */
 
@@ -338,7 +411,10 @@ net_open(struct net_device *dev)
 
 	/* Grab the interrupt */
 	if (request_irq(dev->irq, net_interrupt, 0, "cs89x0", dev))
+	{
+		printk(KERN_DEBUG "mac89x0: couldn't get irq!\n");
 		return -EAGAIN;
+	}
 
 	/* Set up the IRQ - Apparently magic */
 	if (lp->chip_type == CS8900)
@@ -367,9 +443,9 @@ net_open(struct net_device *dev)
 	writereg(dev, PP_BufCFG, READY_FOR_TX_ENBL | RX_MISS_COUNT_OVRFLOW_ENBL |
 		 TX_COL_COUNT_OVRFLOW_ENBL | TX_UNDERRUN_ENBL);
 
+	netif_start_queue(dev);
 	/* now that we've got our act together, enable everything */
 	writereg(dev, PP_BusCTL, readreg(dev, PP_BusCTL) | ENABLE_IRQ);
-	netif_start_queue(dev);
 	return 0;
 }
 
@@ -388,7 +464,11 @@ net_send_packet(struct sk_buff *skb, struct net_device *dev)
 	/* keep the upload from being interrupted, since we
 	   ask the chip to start transmitting before the
 	   whole packet has been completely uploaded. */
+#ifdef LOCK
+	spin_lock_irqsave(&lp->lock, flags);
+#else
 	local_irq_save(flags);
+#endif
 	netif_stop_queue(dev);
 
 	/* initiate a transmit sequence */
@@ -399,15 +479,27 @@ net_send_packet(struct sk_buff *skb, struct net_device *dev)
 	if ((readreg(dev, PP_BusST) & READY_FOR_TX_NOW) == 0) {
 		/* Gasp!  It hasn't.  But that shouldn't happen since
 		   we're waiting for TxOk, so return 1 and requeue this packet. */
+#ifdef LOCK
+		spin_unlock_irqrestore(&lp->lock, flags);
+#else
 		local_irq_restore(flags);
+#endif
 		return NETDEV_TX_BUSY;
 	}
 
+#ifndef CONFIG_NBPMAC
 	/* Write the contents of the packet */
 	skb_copy_from_linear_data(skb, (void *)(dev->mem_start + PP_TxFrame),
 				  skb->len+1);
 
+#else
+	outsw(dev->base_addr + TX_FRAME_PORT, skb->data, (skb->len + 1) / 2);
+#endif
+#ifdef LOCK
+	spin_unlock_irqrestore(&lp->lock, flags);
+#else
 	local_irq_restore(flags);
+#endif
 	dev->trans_start = jiffies;
 	dev_kfree_skb (skb);
 
@@ -502,16 +594,26 @@ net_rx(struct net_device *dev)
 
 	length = readreg(dev, PP_RxLength);
 	/* Malloc up new buffer. */
+#ifndef CONFIG_NBPMAC
 	skb = alloc_skb(length, GFP_ATOMIC);
+#else
+	skb = dev_alloc_skb(length + 4);
+#endif
 	if (skb == NULL) {
 		printk("%s: Memory squeeze, dropping packet.\n", dev->name);
 		lp->stats.rx_dropped++;
 		return;
 	}
+#ifndef CONFIG_NBPMAC
 	skb_put(skb, length);
 
 	skb_copy_to_linear_data(skb, (void *)(dev->mem_start + PP_RxFrame),
 				length);
+#else
+	skb->dev = dev;
+	skb_reserve(skb, 2);	/* longword align L3 header */
+	insw(dev->base_addr + RX_FRAME_PORT, skb_put(skb, length), (length + 1) / 2);
+#endif
 
 	if (net_debug > 3)printk("%s: received %d byte packet of type %x\n",
                                  dev->name, length,

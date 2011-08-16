@@ -354,10 +354,26 @@ void nubus_get_rsrc_str(void* dest,
 			int maxlen);
 #endif /* __KERNEL__ */
 
+#ifdef CONFIG_NBPMAC
+#define NUBUS_IO_SIZE       (0x1000000) /* 16MB per slot */
+extern unsigned char *nubus_slot_map[16];
+#endif
+
 /* We'd like to get rid of this eventually.  Only daynaport.c uses it now. */
 static inline void *nubus_slot_addr(int slot)
 {
+#ifdef CONFIG_MAC
 	return (void *)(0xF0000000|(slot<<24));
-}
+#else
+	unsigned long phys;
+	unsigned char *virt;
 
+	if (nubus_slot_map[slot])
+		return (void *)nubus_slot_map[slot];
+	phys = 0xF0000000UL + (slot<<24);
+	virt = (unsigned char *)ioremap(phys, NUBUS_IO_SIZE);
+	nubus_slot_map[slot] = virt;
+	return (void *)virt;
+#endif
+}
 #endif /* LINUX_NUBUS_H */

@@ -180,6 +180,24 @@ void __init MMU_init(void)
 	ioremap_bot = IOREMAP_TOP;
 
 	/* Map in I/O resources */
+#ifdef CONFIG_NBPMAC
+	if (of_flat_dt_is_compatible(of_get_flat_dt_root(), "M2")) {
+		setbat(1, ioremap_bot, 0x50f00000, 0x100000, _PAGE_NO_CACHE | _PAGE_GUARDED | _PAGE_BASE | _PAGE_SHARED | _PAGE_RW | _PAGE_DIRTY | _PAGE_HWWRITE);
+		ioremap_bot = _ALIGN_DOWN(ioremap_bot - 0x100000, 128 << 10);
+		setbat(0, ioremap_bot, 0x60000000, 0x100000, _PAGE_NO_CACHE | _PAGE_GUARDED | _PAGE_BASE | _PAGE_SHARED | _PAGE_RW | _PAGE_DIRTY | _PAGE_HWWRITE);
+		ioremap_bot = _ALIGN_DOWN(ioremap_bot - 0x100000, 128 << 10);
+		if (ppc_md.progress)
+			ppc_md.progress("MMU: Set BAT for NuBus PowerBook", 0x303);
+	}
+	if (of_flat_dt_is_compatible(of_get_flat_dt_root(), "Performa")) {
+		setbat(1, ioremap_bot, 0x50000000, 0x4000000, _PAGE_NO_CACHE | _PAGE_GUARDED | _PAGE_BASE | _PAGE_SHARED | _PAGE_RW | _PAGE_DIRTY | _PAGE_HWWRITE);
+		ioremap_bot = _ALIGN_DOWN(ioremap_bot - 0x4000000, 128 << 10);
+		setbat(0, ioremap_bot, 0xf9000000, 0x100000, _PAGE_NO_CACHE | _PAGE_GUARDED | _PAGE_BASE | _PAGE_SHARED | _PAGE_RW | _PAGE_DIRTY | _PAGE_HWWRITE);
+		ioremap_bot = _ALIGN_DOWN(ioremap_bot - 0x100000, 128 << 10);
+		if (ppc_md.progress)
+			ppc_md.progress("MMU: Set BAT for NuBus Performa", 0x303);
+	}
+#endif
 	if (ppc_md.progress)
 		ppc_md.progress("MMU:setio", 0x302);
 

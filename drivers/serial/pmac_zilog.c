@@ -38,6 +38,10 @@
  *         - maybe put something right into uap->clk_divisor
  */
 
+/*
+ * debugging output doesn't work if used as boot console
+ * because of MacIO not being setup yet
+ */
 #undef DEBUG
 #undef DEBUG_HARD
 #undef USE_CTRL_O_SYSRQ
@@ -970,7 +974,11 @@ static int pmz_startup(struct uart_port *port)
 	}	
 
 	pmz_get_port_A(uap)->flags |= PMACZILOG_FLAG_IS_IRQ_ON;
+//#ifndef CONFIG_NBPMAC
 	if (request_irq(uap->port.irq, pmz_interrupt, IRQF_SHARED,
+//#else
+//	if (request_irq(uap->port.irq, pmz_interrupt, IRQF_SHARED | IRQF_DISABLED,
+//#endif
 			"SCC", uap)) {
 		pmz_error("Unable to register zs interrupt handler.\n");
 		pmz_set_scc_power(uap, 0);
@@ -1477,7 +1485,10 @@ static int __init pmz_init_port(struct uart_pmac_port *uap)
 	uap->port.membase = ioremap(uap->port.mapbase, 0x1000);
 
 	uap->control_reg = uap->port.membase;
-	uap->data_reg = uap->control_reg + 0x10;
+	if (!(of_device_is_compatible(np, "pre_pci")))
+		uap->data_reg = uap->control_reg + 0x10;
+	else
+		uap->data_reg = uap->control_reg + 0x4;
 	
 	/*
 	 * Request & map DBDMA registers

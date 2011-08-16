@@ -1,3 +1,7 @@
+#ifdef CONFIG_NBPMAC
+#define CONFIG_ADB_PMU_NBPMAC_ALT
+#undef DEBUG_PMU
+#endif
 /*
  * Device driver for the via-pmu on Apple Powermacs.
  *
@@ -76,7 +80,7 @@ static volatile unsigned char __iomem *via;
 
 /* VIA registers - spaced 0x200 bytes apart */
 #define RS		0x200		/* skip between registers */
-#define B		0		/* B-side data */
+static u16 B =		0;		/* B-side data */
 #define A		RS		/* A-side data */
 #define DIRB		(2*RS)		/* B-side direction (1=output) */
 #define DIRA		(3*RS)		/* A-side direction (1=output) */
@@ -94,8 +98,8 @@ static volatile unsigned char __iomem *via;
 #define ANH		(15*RS)		/* A-side data, no handshake */
 
 /* Bits in B data register: both active low */
-#define TACK		0x08		/* Transfer acknowledge (input) */
-#define TREQ		0x10		/* Transfer request (output) */
+static u8 TACK = 	0x08;		/* Transfer acknowledge (input) */
+static u8 TREQ = 	0x10;		/* Transfer request (output) */
 
 /* Bits in ACR */
 #define SR_CTRL		0x1c		/* Shift register control bits */
@@ -125,12 +129,21 @@ static volatile enum int_data_state {
 	int_data_flush
 } int_data_state[2] = { int_data_empty, int_data_empty };
 
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+static struct adb_request adb_int_ack_req[2];
+static int adb_int_ack_req_index = 2;
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
+
 static struct adb_request *current_req;
 static struct adb_request *last_req;
 static struct adb_request *req_awaiting_reply;
 static unsigned char interrupt_data[2][32];
 static int interrupt_data_len[2];
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 static int int_data_last;
+#else
+static int int_data_last = 0;
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 static unsigned char *reply_ptr;
 static int data_index;
 static int data_len;
@@ -141,7 +154,7 @@ static int pmu_kind = PMU_UNKNOWN;
 static int pmu_fully_inited;
 static int pmu_has_adb;
 static struct device_node *gpio_node;
-static unsigned char __iomem *gpio_reg;
+static unsigned char __iomem *gpio_reg = NULL;
 static int gpio_irq = NO_IRQ;
 static int gpio_irq_enabled = -1;
 static volatile int pmu_suspended;
@@ -173,7 +186,7 @@ int __fake_sleep;
 int asleep;
 
 #ifdef CONFIG_ADB
-static int adb_dev_map;
+static int adb_dev_map = 0;
 static int pmu_adb_flags;
 
 static int pmu_probe(void);
@@ -186,6 +199,9 @@ static int pmu_adb_reset_bus(void);
 static int init_pmu(void);
 static void pmu_start(void);
 static irqreturn_t via_pmu_interrupt(int irq, void *arg);
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+static irqreturn_t pmu_sr_intr(int irq, void *dummy);
+#endif
 static irqreturn_t gpio1_interrupt(int irq, void *arg);
 static const struct file_operations pmu_info_proc_fops;
 static const struct file_operations pmu_irqstats_proc_fops;
@@ -262,7 +278,8 @@ static char *pbook_type[] = {
 	"PowerBook 2400/3400/3500(G3)",
 	"PowerBook G3 Series",
 	"1999 PowerBook G3",
-	"Core99"
+	"Core99",
+	"PowerBook 1400/2300/5300"
 };
 
 int __init find_via_pmu(void)
@@ -327,27 +344,58 @@ int __init find_via_pmu(void)
 			if (gaddr != OF_BAD_ADDR)
 				gpio_reg = ioremap(gaddr, 0x10);
 		}
+		of_node_put(gpiop);
 		if (gpio_reg == NULL) {
 			printk(KERN_ERR "via-pmu: Can't find GPIO reg !\n");
 			goto fail_gpio;
 		}
+	}
+	else if (of_machine_is_compatible("M2"))
+	{
+		/* TODO: FB: Better calls this PMU_WHITNEY_BASED? */
+		pmu_kind = PMU_NUBUS_BASED;
+
+		pmu_intr_mask = PMU_INT_PCEJECT |
+			PMU_INT_SNDBRT |
+			PMU_INT_ADB |
+			PMU_INT_TICK;
+
+		printk( KERN_DEBUG "find_via_pmu(): detected nubus-based PMU\n" );
 	} else
 		pmu_kind = PMU_UNKNOWN;
 
-	via = ioremap(taddr, 0x2000);
+	if (pmu_kind == PMU_NUBUS_BASED) {
+		via = ioremap(taddr, 0x4000);
+		B = 0x2000;
+		TACK = 0x02;
+		TREQ = 0x04;
+	} else {
+		via = ioremap(taddr, 0x2000);
+		B = 0x0;
+		TACK = 0x08;
+		TREQ = 0x10;
+	}
+    
 	if (via == NULL) {
 		printk(KERN_ERR "via-pmu: Can't map address !\n");
 		goto fail;
 	}
 	
-	out_8(&via[IER], IER_CLR | 0x7f);	/* disable all intrs */
-	out_8(&via[IFR], 0x7f);			/* clear IFR */
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	if (pmu_kind != PMU_NUBUS_BASED) {
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
+	out_8(&via[IER], IER_CLR | 0x7f);  /* disable all intrs */
+	out_8(&via[IFR], 0x7f);			   /* clear IFR */
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	}
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 
 	pmu_state = idle;
 
 	if (!init_pmu()) {
 		via = NULL;
-		return 0;
+//		return 0;
+		goto fail;
 	}
 
 	printk(KERN_INFO "PMU driver v%d initialized for %s, firmware: %02x\n",
@@ -357,10 +405,10 @@ int __init find_via_pmu(void)
 	
 	return 1;
  fail:
-	of_node_put(vias);
 	iounmap(gpio_reg);
 	gpio_reg = NULL;
  fail_gpio:
+	of_node_put(vias);
 	vias = NULL;
 	return 0;
 }
@@ -379,6 +427,8 @@ static int __init pmu_init(void)
 }
 #endif /* CONFIG_ADB */
 
+unsigned int id_via_pmu_intr = 0, id_pmu_sr_intr = 1;
+
 /*
  * We can't wait until pmu_init gets called, that happens too late.
  * It happens after IDE and SCSI initialization, which can take a few
@@ -389,23 +439,57 @@ static int __init pmu_init(void)
 static int __init via_pmu_start(void)
 {
 	unsigned int irq;
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	unsigned int sr_irq = NO_IRQ;
+#endif
 
 	if (vias == NULL)
 		return -ENODEV;
 
 	batt_req.complete = 1;
 
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	if (pmu_kind == PMU_NUBUS_BASED)
+		irq = irq_of_parse_and_map(vias, 2);
+	else
+#endif
 	irq = irq_of_parse_and_map(vias, 0);
+
 	if (irq == NO_IRQ) {
 		printk(KERN_ERR "via-pmu: can't map interrupt\n");
 		return -ENODEV;
 	}
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	if (pmu_kind == PMU_NUBUS_BASED)
+		sr_irq = irq_of_parse_and_map(vias, 1);
+	else
+		sr_irq = irq;
+
+	if (sr_irq == NO_IRQ) {
+		printk(KERN_ERR "via-pmu: can't map SR interrupt\n");
+		return -ENODEV;
+	}
+	if (request_irq(sr_irq, pmu_sr_intr, IRQF_SHARED | IRQF_TIMER /*| IRQF_DISABLED*/, "VIA-PMU SR", &id_pmu_sr_intr)) {
+		printk(KERN_ERR "via-pmu: can't request irq %d\n", sr_irq);
+		return -ENODEV;
+	}
+#endif
 	/* We set IRQF_TIMER because we don't want the interrupt to be disabled
 	 * between the 2 passes of driver suspend, we control our own disabling
 	 * for that one
 	 */
-	if (request_irq(irq, via_pmu_interrupt, IRQF_TIMER, "VIA-PMU", (void *)0)) {
+#ifdef CONFIG_NBPMAC
+	if (request_irq(irq, via_pmu_interrupt, /*IRQF_DISABLED |*/ IRQF_SHARED | IRQF_TIMER, "VIA-PMU", &id_via_pmu_intr)) {
+#else
+	if (request_irq(irq, via_pmu_interrupt, IRQF_TIMER, "VIA-PMU", &id_via_pmu_intr)) {
+#endif
 		printk(KERN_ERR "via-pmu: can't request irq %d\n", irq);
+
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+		if (pmu_kind == PMU_NUBUS_BASED)
+			free_irq(sr_irq, pmu_sr_intr);
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
+
 		return -ENODEV;
 	}
 
@@ -428,7 +512,23 @@ static int __init via_pmu_start(void)
 	}
 
 	/* Enable interrupts */
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	if (pmu_kind != PMU_NUBUS_BASED)
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 	out_8(&via[IER], IER_SET | SR_INT | CB1_INT);
+#if 0
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	printk(KERN_DEBUG "PMU: clearing pending interrupts...\n");
+
+	interrupt_data[0][0] = 1;
+	adb_int_pending = 1;
+	via_pmu_interrupt(0, NULL);
+	while (!((interrupt_data[0][0] == 0x80) && (pmu_state == idle)))
+		udelay(10);
+
+	printk(KERN_DEBUG "PMU: pending interrupts cleared\n");
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
+#endif
 
 	pmu_fully_inited = 1;
 
@@ -524,8 +624,14 @@ init_pmu(void)
 	struct adb_request req;
 
 	out_8(&via[B], via[B] | TREQ);			/* negate TREQ */
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	if (pmu_kind != PMU_NUBUS_BASED)
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 	out_8(&via[DIRB], (via[DIRB] | TREQ) & ~TACK);	/* TACK in, TREQ out */
 
+#ifdef DEBUG_PMU
+	printk(KERN_DEBUG "init_pmu: sendig interrupt mask...\n");
+#endif
 	pmu_request(&req, NULL, 2, PMU_SET_INTR_MASK, pmu_intr_mask);
 	timeout =  100000;
 	while (!req.complete) {
@@ -537,9 +643,22 @@ init_pmu(void)
 		pmu_poll();
 	}
 
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+#ifdef DEBUG_PMU
+	printk(KERN_DEBUG "init_pmu: polling PMU until it is idle...\n");
+#endif
+	while (pmu_state != idle) {
+	        pmu_poll();
+		udelay(10);
+	}
+#endif
+#ifdef DEBUG_PMU
+	printk(KERN_DEBUG "init_pmu: acking all interrupts...\n");
+#endif
 	/* ack all pending interrupts */
 	timeout = 100000;
 	interrupt_data[0][0] = 1;
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 	while (interrupt_data[0][0] || pmu_state != idle) {
 		if (--timeout < 0) {
 			printk(KERN_ERR "init_pmu: timed out acking intrs\n");
@@ -550,6 +669,22 @@ init_pmu(void)
 		via_pmu_interrupt(0, NULL);
 		udelay(10);
 	}
+#else
+	while (interrupt_data[0][0] || pmu_state != idle) {
+		if (--timeout < 0) {
+			printk(KERN_ERR "init_pmu: timed out acking intrs\n");
+			return 0;
+		}
+		if (pmu_state == idle) {
+			adb_int_pending = 1;
+			via_pmu_interrupt(0, NULL);
+		}
+		pmu_poll();
+		udelay(10);
+		if (pmu_state == idle)
+			break;
+	}
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 
 	/* Tell PMU we are ready.  */
 	if (pmu_kind == PMU_KEYLARGO_BASED) {
@@ -558,6 +693,9 @@ init_pmu(void)
 			pmu_poll();
 	}
 
+#ifdef DEBUG_PMU
+	printk(KERN_DEBUG "init_pmu: reading PMU version...\n");
+#endif
 	/* Read PMU version */
 	pmu_request(&req, NULL, 1, PMU_GET_VERSION);
 	pmu_wait_complete(&req);
@@ -576,6 +714,9 @@ init_pmu(void)
 			       option_server_mode ? "enabled" : "disabled");
 		}
 	}
+#ifdef DEBUG_PMU
+	printk(KERN_DEBUG "init_pmu: done!\n");
+#endif
 	return 1;
 }
 
@@ -1068,6 +1209,11 @@ static int pmu_adb_reset_bus(void)
 	/* anyone got a better idea?? */
 	__pmu_adb_autopoll(0);
 
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	pmu_suspend();
+	out_8(&via[IER], SR_INT | IER_CLR);
+#endif
+
 	req.nbytes = 4;
 	req.done = NULL;
 	req.data[0] = PMU_ADB_CMD;
@@ -1081,7 +1227,15 @@ static int pmu_adb_reset_bus(void)
 		printk(KERN_ERR "pmu_adb_reset_bus: pmu_queue_request failed\n");
 		return -EIO;
 	}
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	while (!req.complete)
+		pmu_poll();
+
+	out_8(&via[IER], SR_INT | IER_SET);
+	pmu_resume();
+#else
 	pmu_wait_complete(&req);
+#endif
 
 	if (save_autopoll != 0)
 		__pmu_adb_autopoll(save_autopoll);
@@ -1100,7 +1254,6 @@ pmu_request(struct adb_request *req, void (*done)(struct adb_request *),
 
 	if (vias == NULL)
 		return -ENXIO;
-
 	if (nbytes < 0 || nbytes > 32) {
 		printk(KERN_ERR "pmu_request: bad nbytes (%d)\n", nbytes);
 		req->complete = 1;
@@ -1145,17 +1298,22 @@ pmu_queue_request(struct adb_request *req)
 	if (current_req != 0) {
 		last_req->next = req;
 		last_req = req;
+#ifdef DEBUG_PMU
+		printk(KERN_DEBUG "pmu_queue_request: PMU busy\n");
+#endif
 	} else {
 		current_req = req;
 		last_req = req;
-		if (pmu_state == idle)
+		if (pmu_state == idle) {
 			pmu_start();
+		}
 	}
 	spin_unlock_irqrestore(&pmu_lock, flags);
 
 	return 0;
 }
 
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 static inline void
 wait_for_ack(void)
 {
@@ -1171,6 +1329,35 @@ wait_for_ack(void)
 		udelay(10);
 	}
 }
+#else
+static inline int
+wait_for_ack(char mode, unsigned long msecs)
+{
+	int timeout = msecs * 10;
+	unsigned char byte;
+
+	do {
+		byte = in_8(&via[B]) & TACK;
+
+		switch (mode) {
+			case 0:
+		        	if (!byte)
+           				return 0;
+
+			case 1:
+				if (byte)
+					return 0;
+		}
+
+		udelay(10);
+	} while (--timeout >= 0);
+
+	printk(KERN_ERR "PMU timeout, pmu_state: %d, mode: %d, IFR: 0x%02X, " \
+		"IER: 0x%02X\n", pmu_state, mode, in_8(&via[IFR]), in_8(&via[IER]));
+
+	return 1;
+}
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 
 /* New PMU seems to be very sensitive to those timings, so we make sure
  * PCI is flushed immediately */
@@ -1179,22 +1366,50 @@ send_byte(int x)
 {
 	volatile unsigned char __iomem *v = via;
 
+#ifdef DEBUG_PMU
+	printk("->|");
+#endif
+
 	out_8(&v[ACR], in_8(&v[ACR]) | SR_OUT | SR_EXT);
 	out_8(&v[SR], x);
 	out_8(&v[B], in_8(&v[B]) & ~TREQ);		/* assert TREQ */
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 	(void)in_8(&v[B]);
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 }
 
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 static inline void
 recv_byte(void)
 {
 	volatile unsigned char __iomem *v = via;
+
+#ifdef DEBUG_PMU
+	printk("<-|");
+#endif
 
 	out_8(&v[ACR], (in_8(&v[ACR]) & ~SR_OUT) | SR_EXT);
 	in_8(&v[SR]);		/* resets SR */
 	out_8(&v[B], in_8(&v[B]) & ~TREQ);
 	(void)in_8(&v[B]);
 }
+#else
+static inline char
+recv_byte(void)
+{
+	volatile unsigned char __iomem *v = via;
+	char byte;
+
+#ifdef DEBUG_PMU
+	printk("<-|");
+#endif
+
+	byte = in_8(&v[SR]);
+	out_8(&v[B], in_8(&v[B]) | TREQ);
+
+	return byte;
+}
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 
 static inline void
 pmu_done(struct adb_request *req)
@@ -1218,8 +1433,17 @@ pmu_start(void)
 	/* get the packet to send */
 	req = current_req;
 	if (req == 0 || pmu_state != idle
-	    || (/*req->reply_expected && */req_awaiting_reply))
+	   || (/*req->reply_expected && */req_awaiting_reply
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	/* VERY important this one: IRQs from the PMU always have to be ACKed */
+	   && (req->data[0] != PMU_INT_ACK)
+#endif
+	)) {
+//#ifdef DEBUG_PMU
+	printk("pmu_start: aborting (req = 0x%d, pmu_state = %d, req_awaiting_reply = 0x%d)\n", (int)req, pmu_state, (int)req_awaiting_reply);
+//#endif
 		return;
+		}
 
 	pmu_state = sending;
 	data_index = 1;
@@ -1228,7 +1452,12 @@ pmu_start(void)
 	/* Sounds safer to make sure ACK is high before writing. This helped
 	 * kill a problem with ADB and some iBooks
 	 */
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 	wait_for_ack();
+#else
+	wait_for_ack(1, 32);
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
+
 	/* set the shift register to shift out and send a byte */
 	send_byte(req->data[0]);
 }
@@ -1240,6 +1469,18 @@ pmu_poll(void)
 		return;
 	if (disable_poll)
 		return;
+
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+//	if (in_8(&via[IFR]) & CB1_INT) {
+//		out_8(&via[IFR], CB1_INT);
+//		via_pmu_interrupt(0, NULL);
+//	}
+//	if (in_8(&via[IFR]) & SR_INT) {
+//		out_8(&via[IFR], SR_INT);
+		pmu_sr_intr(0, NULL);
+//	}
+//#else
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 	via_pmu_interrupt(0, NULL);
 }
 
@@ -1253,6 +1494,17 @@ pmu_poll_adb(void)
 	/* Kicks ADB read when PMU is suspended */
 	adb_int_pending = 1;
 	do {
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+//		if (adb_int_pending || (in_8(&via[IFR]) & CB1_INT)) {
+//			out_8(&via[IFR], CB1_INT);
+//			via_pmu_interrupt(0, NULL);
+//		}
+//		if (in_8(&via[IFR]) & SR_INT) {
+//			out_8(&via[IFR], SR_INT);
+			pmu_sr_intr(0, NULL);
+//		}
+//#else
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 		via_pmu_interrupt(0, NULL);
 	} while (pmu_suspended && (adb_int_pending || pmu_state != idle
 		|| req_awaiting_reply));
@@ -1264,7 +1516,23 @@ pmu_wait_complete(struct adb_request *req)
 	if (!via)
 		return;
 	while((pmu_state != idle && pmu_state != locked) || !req->complete)
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	{
+//		if (in_8(&via[IFR]) & CB1_INT) {
+//			out_8(&via[IFR], CB1_INT);
+//			via_pmu_interrupt(0, NULL);
+//		}
+//		if (in_8(&via[IFR]) & SR_INT) {
+//			out_8(&via[IFR], SR_INT);
+			pmu_sr_intr(0, NULL);
+//		}
+//	}
+//#else
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 		via_pmu_interrupt(0, NULL);
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+	}
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 }
 
 /* This function loops until the PMU is idle and prevents it from
@@ -1279,7 +1547,10 @@ pmu_suspend(void)
 
 	if (!via)
 		return;
-	
+		
+	if (!pmu_fully_inited)
+		return;
+
 	spin_lock_irqsave(&pmu_lock, flags);
 	pmu_suspended++;
 	if (pmu_suspended > 1) {
@@ -1439,12 +1710,18 @@ next:
 	goto next;
 }
 
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 static struct adb_request*
 pmu_sr_intr(void)
+#else
+static irqreturn_t
+pmu_sr_intr(int irq, void *dummy)
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 {
 	struct adb_request *req;
 	int bite = 0;
 
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 	if (via[B] & TREQ) {
 		printk(KERN_ERR "PMU: spurious SR intr (%x)\n", via[B]);
 		out_8(&via[IFR], SR_INT);
@@ -1452,7 +1729,7 @@ pmu_sr_intr(void)
 	}
 	/* The ack may not yet be low when we get the interrupt */
 	while ((in_8(&via[B]) & TACK) != 0)
-			;
+		;
 
 	/* if reading grab the byte, and reset the interrupt */
 	if (pmu_state == reading || pmu_state == reading_intr)
@@ -1461,9 +1738,54 @@ pmu_sr_intr(void)
 	/* reset TREQ and wait for TACK to go high */
 	out_8(&via[B], in_8(&via[B]) | TREQ);
 	wait_for_ack();
+#else
+	unsigned long flags;
+//	if ((pmu_state == idle) && !(adb_int_pending || current_req))
+//	      return;
+//	out_8(&via[IER], SR_INT | IER_CLR);
+//	spin_lock(&pmu_lock);
+	spin_lock_irqsave(&pmu_lock, flags);
+//	++disable_poll;
+
+	if (in_8(&via[IFR]) & SR_INT) {
+		if (pmu_kind != PMU_NUBUS_BASED)
+			out_8(&via[IFR], SR_INT);
+
+		if (!irq) {
+			out_8(&via[IFR], SR_INT);
+#ifdef DEBUG_PMU
+			printk(KERN_DEBUG "PMU: VIA1 SR_INT (polled)\n");
+#endif
+		}
+#ifdef DEBUG_PMU
+		else {
+			printk(KERN_DEBUG "PMU: VIA1 SR_INT\n");
+		}
+#endif
+	} else {
+//		--disable_poll;
+		spin_unlock_irqrestore(&pmu_lock, flags);
+//		spin_unlock(&pmu_lock);
+		return IRQ_NONE;
+	}
+
+	if (wait_for_ack(0, 320) == 1) {
+//		--disable_poll;
+		spin_unlock_irqrestore(&pmu_lock, flags);
+//		spin_unlock(&pmu_lock);
+//		if (pmu_state != idle);
+//		out_8(&via[IER], SR_INT | IER_SET);
+		return IRQ_NONE; /* TODO: OK? FB */
+	}
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 
 	switch (pmu_state) {
 	case sending:
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+		out_8(&via[B], in_8(&via[B]) | TREQ);
+		if (wait_for_ack(1, 32) == 1)
+			break;
+#endif
 		req = current_req;
 		if (data_len < 0) {
 			data_len = req->nbytes - 1;
@@ -1478,25 +1800,67 @@ pmu_sr_intr(void)
 		data_len = pmu_data_len[req->data[0]][1];
 		if (data_len == 0) {
 			pmu_state = idle;
+#ifdef DEBUG_PMU
+			printk(KERN_DEBUG "pmu_sr_intr: sending->idle\n");
+#endif
 			current_req = req->next;
 			if (req->reply_expected)
 				req_awaiting_reply = req;
 			else
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 				return req;
+#else
+				pmu_done(req);
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 		} else {
-			pmu_state = reading;
-			data_index = 0;
-			reply_ptr = req->reply + req->reply_len;
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+			if (current_req->data[0] == PMU_INT_ACK) {
+#ifdef DEBUG_PMU
+				printk(KERN_DEBUG "pmu_sr_intr: sending->reading_intr\n");
+#endif
+				pmu_state = reading_intr;
+				data_index = 0;
+				reply_ptr = interrupt_data[adb_int_ack_req_index];
+			} else {
+#endif
+#ifdef DEBUG_PMU
+				printk(KERN_DEBUG "pmu_sr_intr: sending->reading\n");
+#endif
+				pmu_state = reading;
+				data_index = 0;
+				reply_ptr = req->reply + req->reply_len;
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+			}
+			out_8(&via[ACR], (in_8(&via[ACR]) & ~SR_OUT) | SR_EXT);
+#endif
 			recv_byte();
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+			out_8(&via[B], in_8(&via[B]) & ~TREQ);
+#endif
 		}
 		break;
 
 	case intack:
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+		out_8(&via[B], in_8(&via[B]) | TREQ);
+		if (wait_for_ack(1, 32) == 1)
+			break;
+#endif
+
 		data_index = 0;
 		data_len = -1;
+#ifdef DEBUG_PMU
+	        printk(KERN_DEBUG "pmu_sr_intr: intack->reading_intr\n");
+#endif
 		pmu_state = reading_intr;
 		reply_ptr = interrupt_data[int_data_last];
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+		out_8(&via[ACR], (in_8(&via[ACR]) & ~SR_OUT) | SR_EXT);
+#endif
 		recv_byte();
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+		out_8(&via[B], in_8(&via[B]) & ~TREQ);
+#endif
 		if (gpio_irq >= 0 && !gpio_irq_enabled) {
 			enable_irq(gpio_irq);
 			gpio_irq_enabled = 1;
@@ -1505,6 +1869,9 @@ pmu_sr_intr(void)
 
 	case reading:
 	case reading_intr:
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+		bite = recv_byte();
+#endif
 		if (data_len == -1) {
 			data_len = bite;
 			if (bite > 32)
@@ -1513,14 +1880,35 @@ pmu_sr_intr(void)
 			reply_ptr[data_index++] = bite;
 		}
 		if (data_index < data_len) {
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+			if (wait_for_ack(1, 32) == 1)
+				break;
+			out_8(&via[B], in_8(&via[B]) & ~TREQ);
+#else
 			recv_byte();
+#endif /* CONFIG_ADB_PMU_NBPMAC_ALT */
 			break;
 		}
 
 		if (pmu_state == reading_intr) {
+#ifdef DEBUG_PMU
+			printk(KERN_DEBUG "pmu_sr_intr: reading_intr->idle\n");
+#endif
 			pmu_state = idle;
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 			int_data_state[int_data_last] = int_data_ready;
 			interrupt_data_len[int_data_last] = data_len;
+#else
+			interrupt_data_len[adb_int_ack_req_index] = data_len;
+			req = current_req;
+			current_req = req->next;
+			req->reply_len += data_index;
+			pmu_done(req);
+			req = NULL;
+			pmu_handle_data(interrupt_data[adb_int_ack_req_index], interrupt_data_len[adb_int_ack_req_index]);
+//			pmu_handle_data(interrupt_data[int_data_last], interrupt_data_len[int_data_last]);
+//			pmu_handle_data(interrupt_data[int_data_last], data_index);
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 		} else {
 			req = current_req;
 			/* 
@@ -1534,7 +1922,14 @@ pmu_sr_intr(void)
 				pmu_state = locked;
 			else
 				pmu_state = idle;
+#ifdef DEBUG_PMU
+			        printk(KERN_DEBUG "pmu_sr_intr: reading_intr->idle\n");
+#endif
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 			return req;
+#else
+			pmu_done(req);
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 		}
 		break;
 
@@ -1542,18 +1937,37 @@ pmu_sr_intr(void)
 		printk(KERN_ERR "via_pmu_interrupt: unknown state %d?\n",
 		       pmu_state);
 	}
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 	return NULL;
+#else
+#if 1
+	if (pmu_state == idle) {
+		if (current_req/* && !req_awaiting_reply*/) {
+#ifdef DEBUG_PMU
+			printk(KERN_DEBUG "pmu_sr_intr: pmu_start\n");
+#endif
+			pmu_start();
+		}
+	}
+#endif
+//	--disable_poll;
+	spin_unlock_irqrestore(&pmu_lock, flags);
+//	spin_unlock(&pmu_lock);
+
+	return IRQ_HANDLED; /* TODO: OK? FB */
+#endif /* !CONFIG_ADB_PMU_NBPMAC_ALT */
 }
 
 static irqreturn_t
 via_pmu_interrupt(int irq, void *arg)
 {
+	int handled = 0;
 	unsigned long flags;
+#ifndef CONFIG_ADB_PMU_NBPMAC_ALT
 	int intr;
 	int nloop = 0;
 	int int_data = -1;
 	struct adb_request *req = NULL;
-	int handled = 0;
 
 	/* This is a bit brutal, we can probably do better */
 	spin_lock_irqsave(&pmu_lock, flags);
@@ -1570,7 +1984,19 @@ via_pmu_interrupt(int irq, void *arg)
 			       intr, in_8(&via[IER]), pmu_state);
 			break;
 		}
-		out_8(&via[IFR], intr);
+		if (irq == 0)
+			out_8(&via[IFR], intr);
+		else {
+			if ((*(unsigned int *)arg == id_pmu_sr_intr) && (intr & SR_INT))
+				out_8(&via[IFR], intr & SR_INT);
+			else if ((*(unsigned int *)arg == id_via_pmu_intr) && (intr & CB1_INT))
+				out_8(&via[IFR], intr & CB1_INT);
+			else {
+				--disable_poll;
+				spin_unlock_irqrestore(&pmu_lock, flags);
+				return IRQ_NONE;
+			}
+		}
 		if (intr & CB1_INT) {
 			adb_int_pending = 1;
 			pmu_irq_stats[0]++;
@@ -1631,6 +2057,68 @@ no_free_slot:
 	}
 
 	return IRQ_RETVAL(handled);
+#else
+//	out_8(&via[IER], CB1_INT | IER_CLR);
+
+
+	if (in_8(&via[IFR]) & CB1_INT) {
+//		spin_lock(&pmu_lock);
+//		++disable_poll;
+		spin_lock_irqsave(&pmu_lock, flags);
+		handled = 1; /* TODO: OK? FB */
+		adb_int_pending = 1;
+		pmu_irq_stats[0]++;
+
+		if ((pmu_kind != PMU_NUBUS_BASED) || (!irq)) {
+			out_8(&via[IFR], CB1_INT);
+#ifdef DEBUG_PMU
+			printk(KERN_DEBUG "PMU: VIA1 CB1_INT\n");
+#endif
+		}
+	}
+
+	if (adb_int_pending) {
+//		pmu_state = intack;
+//		if(pmu_fully_inited)
+//			out_8(&via[IER], SR_INT | IER_SET);
+//		send_byte(PMU_INT_ACK);
+		if (adb_int_ack_req_index == 2) {
+			adb_int_ack_req_index = 0;
+		} else if (adb_int_ack_req[0].complete) {
+			adb_int_ack_req_index = 0;
+		} else {
+			adb_int_ack_req_index = 1;
+#ifdef DEBUG_PMU
+			printk(KERN_DEBUG "via_pmu_interrupt: second adb_int_ack_req\n");
+#endif
+		}
+
+		adb_int_ack_req[adb_int_ack_req_index].nbytes = 1;
+		adb_int_ack_req[adb_int_ack_req_index].done = NULL;
+		adb_int_ack_req[adb_int_ack_req_index].data[0] = PMU_INT_ACK;
+		adb_int_ack_req[adb_int_ack_req_index].reply_len = -1;
+		adb_int_ack_req[adb_int_ack_req_index].reply_expected = 0;
+		adb_int_pending = 0;
+#ifdef DEBUG_PMU
+		printk(KERN_DEBUG "via_pmu_interrupt: enqueueing PMU_INT_ACK\n");
+#endif
+		if(pmu_queue_request(&adb_int_ack_req[adb_int_ack_req_index]))
+			printk(KERN_ERR "via_pmu_interrupt: could not enqueue PMU_INT_ACK\n");
+	} else if ((pmu_state == idle) && current_req) {
+#ifdef DEBUG_PMU
+		printk(KERN_DEBUG "via_pmu_interrupt: pmu_start\n");
+#endif
+		pmu_start();
+	}
+
+	if (handled) {
+//		--disable_poll;
+		spin_unlock_irqrestore(&pmu_lock, flags);
+//		spin_unlock(&pmu_lock);
+	}
+
+	return IRQ_RETVAL(handled);
+#endif
 }
 
 void
@@ -1692,7 +2180,12 @@ pmu_restart(void)
 	local_irq_disable();
 
 	drop_interrupts = 1;
-	
+
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+    pmu_fully_inited = 0;
+#endif
+
+
 	if (pmu_kind != PMU_KEYLARGO_BASED) {
 		pmu_request(&req, NULL, 2, PMU_SET_INTR_MASK, PMU_INT_ADB |
 						PMU_INT_TICK );
@@ -1717,6 +2210,10 @@ pmu_shutdown(void)
 	local_irq_disable();
 
 	drop_interrupts = 1;
+
+#ifdef CONFIG_ADB_PMU_NBPMAC_ALT
+    pmu_fully_inited = 0;
+#endif
 
 	if (pmu_kind != PMU_KEYLARGO_BASED) {
 		pmu_request(&req, NULL, 2, PMU_SET_INTR_MASK, PMU_INT_ADB |

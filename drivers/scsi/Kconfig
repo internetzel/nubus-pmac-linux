@@ -1764,6 +1764,16 @@ config MAC_SCSI
 	  SCSI-HOWTO, available from
 	  <http://www.tldp.org/docs.html#howto>.
 
+config SCSI_NBPMAC_NCR5380
+	tristate "Macintosh NCR5380 SCSI"
+	depends on NBPMAC && SCSI
+	select SCSI_SPI_ATTRS
+	help
+	  This is the NCR 5380 SCSI controller included on the NuBus PowerBooks.
+	  If you have one of these say Y and read the
+	  SCSI-HOWTO, available from
+	  <http://www.tldp.org/docs.html#howto>.
+
 config SCSI_MAC_ESP
 	tristate "Macintosh NCR53c9[46] SCSI"
 	depends on MAC && SCSI

@@ -123,6 +123,14 @@
 #define PMAC_TYPE_UNKNOWN_K2		0x19f	/* Any other K2 based */
 #define PMAC_TYPE_UNKNOWN_SHASTA       	0x19e	/* Any other Shasta based */
 
+#ifdef CONFIG_NBPMAC
+/* NuBus PowerMacs
+ */
+#define PMAC_TYPE_M2			0x300	/* PowerBooks */
+#define PMAC_TYPE_PERFORMA		0x301	/* Performa */
+#define PMAC_TYPE_PDM			0x302	/* PDM */
+#endif
+
 /*
  * Motherboard flags
  */
@@ -328,6 +336,11 @@ extern void pmac_resume_agp_for_card(struct pci_dev *dev);
 
 enum {
 	macio_unknown = 0,
+#ifdef CONFIG_NBPMAC
+	macio_whitney,
+	macio_prime_time,
+	macio_amic,
+#endif
 	macio_grand_central,
 	macio_ohare,
 	macio_ohareII,

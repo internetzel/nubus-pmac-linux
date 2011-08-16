@@ -90,6 +90,7 @@ enum {
 	PMU_HEATHROW_BASED,	/* PowerBook G3 series */
 	PMU_PADDINGTON_BASED,	/* 1999 PowerBook G3 */
 	PMU_KEYLARGO_BASED,	/* Core99 motherboard (PMU99) */
+        PMU_NUBUS_BASED,        /* 1400, 2300, 5300 */
 	PMU_68K_V1,		/* 68K PMU, version 1 */
 	PMU_68K_V2, 		/* 68K PMU, version 2 */
 };

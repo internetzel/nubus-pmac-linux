@@ -145,6 +145,20 @@ isection=.kernel:initrd
 link_address='0x400000'
 
 case "$platform" in
+MachKernel)
+    objflags="-S -O binary"
+    ksection=.vmlinux.strip.gz
+    platformo="$object/appleboot-head.o $object/appleboot-mem_pieces.o \
+		$object/appleboot-misc.o $object/inffast.o $object/inflate.o \
+		$object/inftrees.o $object/string.o \
+		$object/fdt.o $object/fdt_ro.o $object/fdt_rw.o \
+		$object/fdt_sw.o $object/fdt_wip.o $object/fdt_strerror.o \
+		$object/crtsavres.o \
+		$object/NuBusDTBs"
+#		$object/PowerBook1400.o"
+    lds=$object/MachKernel.lds
+    link_address="0x00200000 -Tdata 0x00400000"
+   ;;
 pseries)
     platformo=$object/of.o
     link_address='0x4000000'
@@ -285,7 +299,11 @@ addsec() {
 	--set-section-flags=$3=contents,alloc,load,readonly,data
 }
 
-addsec $tmp "$vmz" $ksection $object/empty.o
+if [ "$platform" != "miboot" ]; then
+    addsec $tmp "$vmz" $ksection $object/empty.o
+else
+    addsec $tmp "$vmz" $ksection "$object/empty.o -O aixcoff-rs6000 -R .stab -R .stabstr -R .comment"
+fi
 if [ -z "$cacheit" ]; then
     rm -f "$vmz"
 fi
@@ -307,7 +325,9 @@ if [ "$platform" != "miboot" ]; then
     fi
     ${CROSS}ld -m elf32ppc -T $lds $text_start -o "$ofile" \
 	$platformo $tmp $object/wrapper.a
-    rm $tmp
+    if [ "$platform" != "MachKernel" ]; then
+        rm $tmp
+    fi
 fi
 
 # Some platforms need the zImage's entry point and base address
@@ -377,5 +397,16 @@ ps3)
     odir="$(dirname "$ofile.bin")"
     rm -f "$odir/otheros.bld"
     gzip --force -9 --stdout "$ofile.bin" > "$odir/otheros.bld"
+    ;;
+MachKernel)
+    if [ -n "$link_address" ] ; then
+        text_start="-Ttext $link_address --defsym _start=$link_address"
+    fi
+    ${CROSS}ld -m elf32ppc -T $lds $text_start -o "$ofile" \
+        $platformo $tmp
+    rm $tmp
+    ls -l "$ofile" | awk '{printf "MACH_BOOT_IMAGE %-16d",$5}'>"$object/Mach Kernel"
+    cat "$ofile" >> "$object/Mach Kernel"
+    cat $object/appleboot-initrd >> "$object/Mach Kernel"
     ;;
 esac

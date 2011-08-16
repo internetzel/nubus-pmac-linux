@@ -33,6 +33,7 @@ obj-$(CONFIG_BLK_DEV_FALCON_IDE)	+= falconide.o
 obj-$(CONFIG_BLK_DEV_MAC_IDE)		+= macide.o
 obj-$(CONFIG_BLK_DEV_Q40IDE)		+= q40ide.o
 obj-$(CONFIG_BLK_DEV_BUDDHA)		+= buddha.o
+obj-$(CONFIG_BLK_DEV_NBPMAC_IDE)	+= nbpmacide.o
 
 obj-$(CONFIG_BLK_DEV_AEC62XX)		+= aec62xx.o
 obj-$(CONFIG_BLK_DEV_ALI15X3)		+= alim15x3.o

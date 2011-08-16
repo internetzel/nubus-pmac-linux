@@ -8,6 +8,15 @@ config PPC_PMAC
 	select PPC_NATIVE
 	default y
 
+config NBPMAC
+        bool "NuBus PowerMac support"
+        depends on PPC_PMAC
+	select HARDIRQS_SW_RESEND
+
+config HARDIRQS_SW_RESEND
+        bool
+        default n
+
 config PPC_PMAC64
 	bool
 	depends on PPC_PMAC && POWER4
